@@ -1,13 +1,20 @@
-"""Peak-memory benchmark.
+"""Peak-memory benchmark across batch sizes.
 
 Run with:
 
-    STREAMVAL_BENCH=1 python -m pytest tests/benchmarks/bench_memory.py -v
+    STREAMVAL_BENCH=1 python -m pytest tests/benchmarks/bench_memory.py -v -s
 
-Generates a 1 000 000-row CSV and asserts peak Python-object memory
-stays below 50 MB (default; override with ``STREAMVAL_MAX_MB``). Also
-verifies that doubling ``batch_size`` increases peak memory roughly
-linearly.
+Generates a 1 000 000-row CSV and measures peak Python-object memory
+via tracemalloc at a range of ``batch_size`` values in Arrow batch
+mode. Asserts:
+
+* Peak memory < ``STREAMVAL_MAX_MB`` (default 50 MB) at the default
+  batch size.
+* Memory growth is roughly proportional to ``batch_size`` — not
+  super-linear.
+
+This benchmark documents the small-memory streaming contract of the
+v0.2 Arrow fast path.
 """
 
 from __future__ import annotations
@@ -40,8 +47,15 @@ def _write_csv(path: Path, n: int) -> None:
             w.writerow([i, f"n{i}", f"{i * 0.5:.3f}", "true"])
 
 
-def _measure_peak(path: Path, batch_size: int) -> tuple[int, float]:
-    v = StreamValidator(Row, on_error="skip", batch_size=batch_size)
+def _measure_peak(
+    path: Path, batch_size: int, use_arrow: bool
+) -> tuple[int, float]:
+    v = StreamValidator(
+        Row,
+        on_error="skip",
+        batch_size=batch_size,
+        use_arrow=use_arrow,
+    )
     tracemalloc.start()
     tracemalloc.reset_peak()
     n = 0
@@ -60,23 +74,40 @@ def test_streamval_memory(tmp_path: Path) -> None:
     p = tmp_path / "big.csv"
     _write_csv(p, ROWS)
 
-    n_default, peak_default_mb = _measure_peak(p, batch_size=1000)
-    n_double, peak_double_mb = _measure_peak(p, batch_size=2000)
+    samples: list[tuple[str, int, int, float]] = []
+    for bs in (100, 1_000, 5_000, 10_000):
+        n, peak_mb = _measure_peak(p, batch_size=bs, use_arrow=True)
+        samples.append((f"arrow batch_size={bs}", bs, n, peak_mb))
+
+    n_row, peak_row_mb = _measure_peak(p, batch_size=1_000, use_arrow=False)
+    samples.append(("row mode batch_size=1000", 1_000, n_row, peak_row_mb))
 
     print()
-    print(f"{'batch_size':<12} {'rows':>10} {'peak (MB)':>12}")
-    print("-" * 40)
-    print(f"{1000:<12} {n_default:>10} {peak_default_mb:>12.2f}")
-    print(f"{2000:<12} {n_double:>10} {peak_double_mb:>12.2f}")
+    print(f"{'mode':<28} {'batch_size':>12} {'rows':>10} {'peak (MB)':>12}")
+    print("-" * 66)
+    for label, bs, n, peak_mb in samples:
+        print(f"{label:<28} {bs:>12} {n:>10} {peak_mb:>12.2f}")
 
-    assert n_default == ROWS
-    assert n_double == ROWS
+    assert all(n == ROWS for _, _, n, _ in samples)
 
     max_mb = float(os.environ.get("STREAMVAL_MAX_MB", "50"))
-    assert peak_default_mb < max_mb, (
-        f"peak {peak_default_mb:.2f} MB exceeds budget {max_mb} MB"
+    def _peak_for(target_bs: int) -> float:
+        return next(
+            p
+            for label, bs, _, p in samples
+            if bs == target_bs and "arrow" in label
+        )
+
+    default_peak = _peak_for(1_000)
+    assert default_peak < max_mb, (
+        f"arrow batch_size=1000 peak {default_peak:.2f} MB exceeds "
+        f"budget {max_mb} MB"
     )
-    assert peak_double_mb < 4 * peak_default_mb + 5, (
-        "memory growth is super-linear with batch_size; "
-        f"got {peak_default_mb:.2f} -> {peak_double_mb:.2f} MB"
+
+    # Sub-linear or near-linear growth: doubling batch_size from 5k → 10k
+    # should not more-than-triple memory.
+    peak_5k = _peak_for(5_000)
+    peak_10k = _peak_for(10_000)
+    assert peak_10k < 3 * peak_5k + 5, (
+        f"memory growth super-linear: {peak_5k:.2f} → {peak_10k:.2f} MB"
     )

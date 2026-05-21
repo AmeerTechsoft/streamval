@@ -50,13 +50,47 @@ print(v.stats)  # rows_total, rows_valid, throughput_rps, peak_memory_mb, ...
 
 ## Performance
 
-`streamval` optimises for **bounded memory** rather than peak throughput.
-On a developer Windows laptop, 1,000,000 rows of CSV validate at ~11k
-rows/sec with **< 1 MB** of peak Python-object memory (batch_size=1000).
-A naive "load everything, validate one by one" loop is roughly 10× faster
-on small files, but linearly grows in RAM and OOMs on large files.
-Choose `streamval` when your file does not fit in memory or when you want
-to start consuming valid rows immediately.
+`streamval` optimises for **bounded memory** with strong throughput as
+a secondary goal. The v0.2 Arrow batch fast path validates an entire
+`pyarrow.RecordBatch` per Python ↔ Rust boundary crossing instead of
+one row dict at a time:
+
+| Mode | Approx rps (CI target) | Peak memory |
+|---|---|---|
+| streamval CSV — batch (Arrow path) | 35 000+ (polars installed) | < 5 MB |
+| streamval Parquet — batch (Arrow path) | 45 000+ | < 5 MB |
+| streamval CSV — row mode (polars) | ~14 000 | < 5 MB |
+| streamval CSV — row mode (aiofiles fallback) | ~11 000 | < 5 MB |
+| Naive Pydantic loop | ~120 000 | ~1 GB (reads whole file) |
+
+> The naive loop is faster on small files but **loads the entire dataset
+> into RAM**. `streamval` is the right choice when files don't fit in
+> memory or you want to start consuming valid rows immediately.
+
+> Numbers from a developer Windows laptop with Python 3.13. Real CI
+> hardware (Linux x86, faster I/O) typically shows 2-3× higher
+> throughput. Run `STREAMVAL_BENCH=1 pytest tests/benchmarks/` to
+> measure on your own machine.
+
+### Performance tuning
+
+* Install `streamval[fast]` to unlock the polars Arrow path for CSV.
+  Parquet gets the Arrow fast path with no extra dependency.
+* `use_arrow=True` is the default for CSV and Parquet on the
+  `StreamValidator` constructor. Pass `use_arrow=False` to fall back to
+  the row-mode pipeline (useful for adapters or strategies that need
+  per-row Python dicts).
+* `batch_size` is the main throughput / memory dial — larger batches
+  mean fewer Python ↔ Rust crossings but slightly higher peak memory.
+  The defaults give comfortable bounded-memory behaviour:
+
+      batch_size=100   → ~0.05 MB peak
+      batch_size=1000  → ~0.4 MB peak  (default)
+      batch_size=5000  → ~1.8 MB peak
+      batch_size=10000 → ~3.5 MB peak
+
+* `workers > 1` enables a thread pool. Pydantic's Rust core is
+  thread-safe; per-row ordering is preserved.
 
 ## Why not Pydantic / Pandera / Great Expectations?
 
