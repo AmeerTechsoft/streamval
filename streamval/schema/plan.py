@@ -10,12 +10,15 @@ short-lived models can be garbage-collected.
 from __future__ import annotations
 
 import weakref
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from streamval.core.result import ValidationResult
 from streamval.schema.coerce import SourceFormat, coerce_row
+
+if TYPE_CHECKING:
+    import pyarrow as pa
 
 
 class CompiledValidationPlan:
@@ -24,15 +27,32 @@ class CompiledValidationPlan:
     Args:
         model: The target Pydantic ``BaseModel`` subclass.
         fmt: The source format used for type coercion.
+
+    The plan exposes both a per-row validator (:meth:`validate_row`)
+    and a bulk validator (:meth:`validate_batch`). The bulk path uses
+    a :class:`pydantic.TypeAdapter` compiled at construction time so
+    that ``validate_python`` hands an entire list of coerced rows to
+    pydantic-core's Rust layer in a single boundary crossing.
     """
 
-    __slots__ = ("_model", "_fmt", "_field_names", "_validator")
+    __slots__ = (
+        "_model",
+        "_fmt",
+        "_field_names",
+        "_validator",
+        "_list_adapter",
+    )
 
     def __init__(self, model: type[BaseModel], fmt: SourceFormat) -> None:
         self._model = model
         self._fmt = fmt
         self._field_names: tuple[str, ...] = tuple(model.model_fields.keys())
         self._validator = model.model_validate
+        # ``list[model]`` is a legitimate runtime parametrisation but
+        # mypy can't follow it because ``model`` is a runtime value.
+        # Construct via Any to keep the function strict-clean.
+        list_type = cast(Any, list)[model]
+        self._list_adapter: TypeAdapter[list[BaseModel]] = TypeAdapter(list_type)
 
     @property
     def model(self) -> type[BaseModel]:
@@ -69,6 +89,72 @@ class CompiledValidationPlan:
         except ValidationError as exc:
             return ValidationResult.from_pydantic_error(row_index, raw, exc)
         return ValidationResult.success(row_index, raw, instance)
+
+    def validate_batch(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        start_index: int = 0,
+    ) -> list[ValidationResult]:
+        """Validate a list of rows in one Rust-boundary crossing when possible.
+
+        The fast path coerces every row, then calls
+        :meth:`TypeAdapter.validate_python` once on the whole list. If
+        that succeeds, all rows are valid and we wrap the parsed model
+        instances directly. If it raises, we fall back to per-row
+        validation so the offending rows can be isolated and reported
+        with their original ``ValidationError`` details.
+
+        Args:
+            rows: The batch of raw row dicts to validate.
+            start_index: Row index of the first row in ``rows`` (used
+                when constructing :class:`ValidationResult` objects so
+                global row numbering is preserved).
+
+        Returns:
+            A list of :class:`ValidationResult` in input order, one per
+            input row.
+        """
+        if not rows:
+            return []
+
+        coerced = [coerce_row(r, self._model, self._fmt) for r in rows]
+
+        try:
+            instances = self._list_adapter.validate_python(coerced)
+        except ValidationError:
+            return [
+                self.validate_row(start_index + i, rows[i])
+                for i in range(len(rows))
+            ]
+
+        return [
+            ValidationResult.success(start_index + i, rows[i], instances[i])
+            for i in range(len(rows))
+        ]
+
+    def validate_record_batch(
+        self,
+        batch: pa.RecordBatch,
+        *,
+        start_index: int = 0,
+    ) -> list[ValidationResult]:
+        """Validate a whole :class:`pyarrow.RecordBatch` in one Rust crossing.
+
+        The Arrow fast path: converts the RecordBatch to Python row
+        dicts once (in C, via :meth:`pyarrow.RecordBatch.to_pylist`)
+        rather than constructing N dicts in a Python loop, then hands
+        the resulting list to :meth:`validate_batch`.
+
+        Args:
+            batch: A :class:`pyarrow.RecordBatch` of rows to validate.
+            start_index: Row index of the first row in ``batch``.
+
+        Returns:
+            A list of :class:`ValidationResult` in batch order.
+        """
+        rows: list[dict[str, Any]] = batch.to_pylist()
+        return self.validate_batch(rows, start_index=start_index)
 
 
 _PLAN_CACHE: weakref.WeakKeyDictionary[

@@ -19,6 +19,7 @@ schema plan.
 from __future__ import annotations
 
 import datetime as _dt
+import weakref
 from enum import StrEnum
 from typing import Any, get_args, get_origin
 
@@ -37,6 +38,26 @@ class SourceFormat(StrEnum):
 _TRUTHY = {"true", "t", "yes", "y", "1"}
 _FALSY = {"false", "f", "no", "n", "0"}
 
+# Per-model cache: model class → {field_name: stripped target type}.
+_FIELD_TARGETS: weakref.WeakKeyDictionary[
+    type[BaseModel], tuple[tuple[str, Any], ...]
+] = weakref.WeakKeyDictionary()
+
+
+def _field_targets(model: type[BaseModel]) -> tuple[tuple[str, Any], ...]:
+    cached = _FIELD_TARGETS.get(model)
+    if cached is not None:
+        return cached
+    items: list[tuple[str, Any]] = []
+    for name, info in model.model_fields.items():
+        target = info.annotation
+        if target is None:
+            continue
+        items.append((name, _strip_optional(target)))
+    out = tuple(items)
+    _FIELD_TARGETS[model] = out
+    return out
+
 
 def coerce_row(
     raw: dict[str, Any],
@@ -48,45 +69,44 @@ def coerce_row(
     The function never raises on coercion failure — it leaves problematic
     values untouched so Pydantic can produce the canonical error.
 
+    Field-target info is cached per model class so the hot loop avoids
+    repeated ``typing.get_origin`` calls.
+
     Args:
         raw: The row as produced by an adapter.
         model: The target Pydantic model class.
         fmt: The source format (governs how aggressive coercion is).
 
     Returns:
-        A new dict suitable for ``model.model_validate(...)``.
+        A new dict suitable for ``model.model_validate(...)``. The
+        input dict is returned untouched when no coercion is required
+        (PARQUET / ARROW fast path).
     """
-    fields = model.model_fields
-    out: dict[str, Any] = dict(raw)
+    # PARQUET / ARROW: values arrive natively typed via pyarrow. No
+    # Python-side coercion is needed; just pass the dict through.
+    if fmt is SourceFormat.PARQUET or fmt is SourceFormat.ARROW:
+        return raw
 
-    for name, info in fields.items():
-        if name not in out:
-            continue
-        value = out[name]
-        if value is None:
-            continue
-        target = info.annotation
-        if target is None:
-            continue
-        out[name] = _coerce_value(value, target, fmt)
-
-    return out
-
-
-def _coerce_value(value: Any, target: Any, fmt: SourceFormat) -> Any:
-    inner_target = _strip_optional(target)
+    targets = _field_targets(model)
 
     if fmt is SourceFormat.CSV:
+        out: dict[str, Any] = dict(raw)
+        for name, target in targets:
+            value = out.get(name)
+            if value is None or not isinstance(value, str):
+                continue
+            out[name] = _coerce_str(value, target)
+        return out
+
+    # JSONL: only datetime / date strings need help.
+    out = dict(raw)
+    for name, target in targets:
+        if target is not _dt.datetime and target is not _dt.date:
+            continue
+        value = out.get(name)
         if isinstance(value, str):
-            return _coerce_str(value, inner_target)
-        return value
-
-    if fmt is SourceFormat.JSONL:
-        if isinstance(value, str) and inner_target in (_dt.datetime, _dt.date):
-            return _coerce_str(value, inner_target)
-        return value
-
-    return value
+            out[name] = _coerce_str(value, target)
+    return out
 
 
 def _strip_optional(target: Any) -> Any:

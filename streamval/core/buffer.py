@@ -12,10 +12,13 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from streamval.core.result import ValidationResult
 from streamval.schema.plan import CompiledValidationPlan
+
+if TYPE_CHECKING:
+    import pyarrow as pa
 
 
 class BatchBuffer:
@@ -126,4 +129,68 @@ def _validate_batch(
     return out
 
 
-__all__ = ["BatchBuffer", "ParallelBatchProcessor"]
+class RecordBatchPipeline:
+    """Validates a stream of :class:`pyarrow.RecordBatch` directly.
+
+    Each incoming RecordBatch is handed to
+    :meth:`CompiledValidationPlan.validate_record_batch`, which uses the
+    bulk TypeAdapter path. This is the Arrow fast path that bypasses
+    per-row Python dict construction in the adapter loop.
+
+    With ``workers > 1``, individual batches are dispatched to a
+    thread pool while results are yielded in input order. Pydantic v2's
+    Rust core is thread-safe, so this is safe.
+    """
+
+    def __init__(
+        self,
+        source: AsyncIterator[pa.RecordBatch],
+        plan: CompiledValidationPlan,
+        *,
+        workers: int = 1,
+        start_row_index: int = 0,
+    ) -> None:
+        if workers < 1:
+            raise ValueError("workers must be >= 1")
+        self._source = source
+        self._plan = plan
+        self._workers = workers
+        self._start = start_row_index
+
+    async def stream(self) -> AsyncIterator[ValidationResult]:
+        """Yield :class:`ValidationResult` objects in input row order."""
+        if self._workers == 1:
+            idx = self._start
+            async for batch in self._source:
+                results = self._plan.validate_record_batch(
+                    batch, start_index=idx
+                )
+                idx += batch.num_rows
+                for r in results:
+                    yield r
+            return
+
+        loop = asyncio.get_running_loop()
+        plan = self._plan
+        idx = self._start
+        with ThreadPoolExecutor(max_workers=self._workers) as pool:
+            async for batch in self._source:
+                start = idx
+                idx += batch.num_rows
+                future = loop.run_in_executor(
+                    pool, _validate_record_batch, plan, batch, start
+                )
+                results = await future
+                for r in results:
+                    yield r
+
+
+def _validate_record_batch(
+    plan: CompiledValidationPlan,
+    batch: pa.RecordBatch,
+    start_index: int,
+) -> list[ValidationResult]:
+    return plan.validate_record_batch(batch, start_index=start_index)
+
+
+__all__ = ["BatchBuffer", "ParallelBatchProcessor", "RecordBatchPipeline"]

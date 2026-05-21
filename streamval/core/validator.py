@@ -12,7 +12,7 @@ or async iterator of :class:`ValidationResult` objects.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncGenerator, AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +24,11 @@ from streamval.adapters import (
     jsonl_adapter,
     parquet_adapter,
 )
-from streamval.core.buffer import BatchBuffer, ParallelBatchProcessor
+from streamval.core.buffer import (
+    BatchBuffer,
+    ParallelBatchProcessor,
+    RecordBatchPipeline,
+)
 from streamval.core.result import ValidationResult
 from streamval.core.stats import StatsAccumulator, StreamStats
 from streamval.schema.coerce import SourceFormat
@@ -63,16 +67,23 @@ class StreamValidator:
         batch_size: int = 1000,
         max_errors: int | None = None,
         workers: int = 1,
+        use_arrow: bool = True,
     ) -> None:
         self._schema = schema
         self._on_error = on_error
         self._batch_size = batch_size
         self._max_errors = max_errors
         self._workers = workers
+        self._use_arrow = use_arrow
         self._handler: StrategyHandler = build_handler(
             on_error, max_errors=max_errors
         )
         self._stats = StatsAccumulator()
+
+    @property
+    def use_arrow(self) -> bool:
+        """Whether the Arrow batch fast path is active."""
+        return self._use_arrow
 
     @property
     def stats(self) -> StreamStats:
@@ -154,12 +165,63 @@ class StreamValidator:
             if handled is not None:
                 yield handled
 
+    async def _stream_arrow(
+        self,
+        source: AsyncIterator[Any],
+        fmt: SourceFormat,
+    ) -> AsyncIterator[ValidationResult]:
+        """Arrow fast path: validate :class:`pyarrow.RecordBatch` directly."""
+        plan = get_plan(self._schema, fmt)
+        pipeline = RecordBatchPipeline(source, plan, workers=self._workers)
+
+        self._stats.start()
+        try:
+            async for result in pipeline.stream():
+                self._stats.record(result)
+                handled = await self._handler.handle(result)
+                if handled is not None:
+                    yield handled
+            await self._handler.finalize()
+        finally:
+            self._stats.stop()
+
+    def _stream_arrow_sync(
+        self,
+        batches: Iterator[Any],
+        fmt: SourceFormat,
+    ) -> Iterator[ValidationResult]:
+        """Sync mirror of :meth:`_stream_arrow`."""
+        plan = get_plan(self._schema, fmt)
+        handler = self._handler
+        self._stats.start()
+        idx = 0
+        try:
+            for batch in batches:
+                results = plan.validate_record_batch(batch, start_index=idx)
+                idx += batch.num_rows
+                for result in results:
+                    self._stats.record(result)
+                    handled = _run_coro(handler.handle(result))
+                    if handled is not None:
+                        yield handled
+            _run_coro(handler.finalize())
+        finally:
+            self._stats.stop()
+
     async def astream_csv(
         self,
         path: str | Path,
         **adapter_kwargs: Any,
     ) -> AsyncIterator[ValidationResult]:
         """Validate a CSV file asynchronously."""
+        if self._use_arrow:
+            kwargs = _arrow_kwargs(adapter_kwargs)
+            async for r in self._stream_arrow(
+                csv_adapter.stream_record_batches(path, **kwargs),
+                SourceFormat.CSV,
+            ):
+                yield r
+            return
         async for r in self._stream(
             csv_adapter.stream_rows(path, **adapter_kwargs), SourceFormat.CSV
         ):
@@ -182,6 +244,14 @@ class StreamValidator:
         **adapter_kwargs: Any,
     ) -> AsyncIterator[ValidationResult]:
         """Validate a Parquet file asynchronously."""
+        if self._use_arrow:
+            kwargs = _arrow_kwargs(adapter_kwargs, default_batch_size=10_000)
+            async for r in self._stream_arrow(
+                parquet_adapter.stream_record_batches(path, **kwargs),
+                SourceFormat.PARQUET,
+            ):
+                yield r
+            return
         async for r in self._stream(
             parquet_adapter.stream_rows(path, **adapter_kwargs),
             SourceFormat.PARQUET,
@@ -206,10 +276,15 @@ class StreamValidator:
     ) -> Iterator[ValidationResult]:
         """Streaming sync iterator over a CSV file.
 
-        Uses a sync pipeline (no asyncio overhead) so per-row throughput
-        is roughly an order of magnitude higher than the async path.
-        Peak memory remains bounded by ``batch_size``.
+        When :attr:`use_arrow` is ``True`` (the default), validation
+        runs against :class:`pyarrow.RecordBatch` objects produced by
+        polars (or a stdlib fallback) — no per-row Python dict
+        construction in the adapter loop.
         """
+        if self._use_arrow:
+            kwargs = _arrow_kwargs(adapter_kwargs)
+            batches = _stream_csv_record_batches_sync(path, **kwargs)
+            return self._stream_arrow_sync(batches, SourceFormat.CSV)
         rows = csv_adapter.stream_rows_sync(path, **adapter_kwargs)
         return self._stream_sync(rows, SourceFormat.CSV)
 
@@ -228,6 +303,10 @@ class StreamValidator:
         **adapter_kwargs: Any,
     ) -> Iterator[ValidationResult]:
         """Streaming sync iterator over a Parquet file."""
+        if self._use_arrow:
+            kwargs = _arrow_kwargs(adapter_kwargs, default_batch_size=10_000)
+            batches = parquet_adapter.stream_record_batches_sync(path, **kwargs)
+            return self._stream_arrow_sync(batches, SourceFormat.PARQUET)
         rows = parquet_adapter.stream_rows_sync(path, **adapter_kwargs)
         return self._stream_sync(rows, SourceFormat.PARQUET)
 
@@ -326,7 +405,13 @@ async def astream_parquet(
         yield r
 
 
-_VALIDATOR_KWARGS = {"on_error", "batch_size", "max_errors", "workers"}
+_VALIDATOR_KWARGS = {
+    "on_error",
+    "batch_size",
+    "max_errors",
+    "workers",
+    "use_arrow",
+}
 
 
 def _split_kwargs(
@@ -340,6 +425,53 @@ def _split_kwargs(
         else:
             adapter[k] = v
     return sv, adapter
+
+
+# Adapter kwargs that mean different things on the row vs batch paths.
+# When routing to ``stream_record_batches``, we drop options that don't
+# apply (e.g. chunk_size, encoding, use_polars) so callers can pass the
+# same kwargs they use for row mode.
+_ROW_ONLY_ADAPTER_KWARGS = {"chunk_size", "use_polars", "encoding"}
+
+
+def _arrow_kwargs(
+    kwargs: dict[str, Any],
+    *,
+    default_batch_size: int | None = None,
+) -> dict[str, Any]:
+    out = {k: v for k, v in kwargs.items() if k not in _ROW_ONLY_ADAPTER_KWARGS}
+    if default_batch_size is not None and "batch_size" not in out:
+        out["batch_size"] = default_batch_size
+    return out
+
+
+def _stream_csv_record_batches_sync(
+    path: str | Path,
+    **kwargs: Any,
+) -> Iterator[Any]:
+    """Drive :func:`csv_adapter.stream_record_batches` from sync code.
+
+    Uses a private event loop and steps the async generator one batch at
+    a time, exactly mirroring how the row-mode sync helpers work.
+    """
+    import asyncio
+
+    loop = asyncio.new_event_loop()
+    agen: AsyncGenerator[Any, None] = csv_adapter.stream_record_batches(
+        path, **kwargs
+    )
+    try:
+        while True:
+            try:
+                yield loop.run_until_complete(agen.__anext__())
+            except StopAsyncIteration:
+                return
+    finally:
+        try:
+            loop.run_until_complete(agen.aclose())
+        except Exception:
+            pass
+        loop.close()
 
 
 __all__ = [

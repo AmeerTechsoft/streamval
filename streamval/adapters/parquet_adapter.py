@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any
 
+import pyarrow as pa
 import pyarrow.parquet as pq
 
 
@@ -65,3 +66,39 @@ def stream_rows_sync(
         names = list(cols.keys())
         for i in range(len(batch)):
             yield {name: cols[name][i] for name in names}
+
+
+async def stream_record_batches(
+    path: str | Path,
+    *,
+    batch_size: int = 10_000,
+    columns: list[str] | None = None,
+) -> AsyncIterator[pa.RecordBatch]:
+    """Yield :class:`pyarrow.RecordBatch` objects from a Parquet file.
+
+    The Parquet adapter doesn't need polars: pyarrow already produces
+    RecordBatches natively. The batch mode simply forwards them
+    without converting to dicts.
+    """
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"Parquet file not found: {p}")
+
+    pf = pq.ParquetFile(p)
+    for batch in pf.iter_batches(batch_size=batch_size, columns=columns):
+        yield batch
+        await asyncio.sleep(0)
+
+
+def stream_record_batches_sync(
+    path: str | Path,
+    *,
+    batch_size: int = 10_000,
+    columns: list[str] | None = None,
+) -> Iterator[pa.RecordBatch]:
+    """Sync mirror of :func:`stream_record_batches`."""
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"Parquet file not found: {p}")
+    pf = pq.ParquetFile(p)
+    yield from pf.iter_batches(batch_size=batch_size, columns=columns)
