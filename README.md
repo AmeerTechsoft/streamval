@@ -1,12 +1,16 @@
 # streamval
 
-**Streaming, Pydantic-backed validation for CSV, JSONL, Parquet, and Arrow.**
+**Streaming, Pydantic-backed validation for CSV, JSONL, Parquet, Arrow,
+and HTTP NDJSON / SSE.**
 
 Existing data-validation libraries (Pydantic, Pandera, Great Expectations,
 Cerberus) all assume the dataset fits in memory. `streamval` keeps the
-file on disk and validates it row by row through a Pydantic schema, so
-you can validate a multi-gigabyte file with a few tens of megabytes of
-RAM and start consuming valid rows immediately.
+file (or HTTP response) on disk / on the wire and validates it row by
+row through a Pydantic schema, so you can validate a multi-gigabyte
+file with a few tens of megabytes of RAM and start consuming valid
+rows immediately. The same streaming model handles LLM token streams,
+log services, and any REST endpoint that emits NDJSON or Server-Sent
+Events.
 
 ## Install
 
@@ -14,6 +18,10 @@ RAM and start consuming valid rows immediately.
 pip install streamval
 # faster JSON + lazy CSV via polars/orjson:
 pip install "streamval[fast]"
+# HTTP NDJSON / LLM streaming via httpx:
+pip install "streamval[http]"
+# everything:
+pip install "streamval[fast,http]"
 ```
 
 ## Quickstart
@@ -92,6 +100,17 @@ one row dict at a time:
 * `workers > 1` enables a thread pool. Pydantic's Rust core is
   thread-safe; per-row ordering is preserved.
 
+## Formats
+
+| Format  | Source        | Requires                                       |
+|---------|---------------|------------------------------------------------|
+| CSV     | file / path   | (none, or `streamval[fast]` for polars path)   |
+| JSONL   | file / path   | (none, or `streamval[fast]` for orjson)        |
+| Parquet | file / path   | `pyarrow` (always-on dependency)               |
+| Arrow   | file / path   | `pyarrow` (always-on dependency)               |
+| NDJSON  | HTTP URL      | `streamval[http]` (httpx)                      |
+| SSE/LLM | HTTP URL      | `streamval[http]` (httpx)                      |
+
 ## Why not Pydantic / Pandera / Great Expectations?
 
 | Library | Loads whole file? | Streams? | Multi-format? | Async? |
@@ -100,7 +119,7 @@ one row dict at a time:
 | Pandera | yes (DataFrame) | no | DataFrame only | no |
 | Great Expectations | yes (DataFrame) | no | DataFrame only | no |
 | Cerberus | per-record only | no | no | no |
-| **streamval** | **no** | **yes** | **CSV/JSONL/Parquet/Arrow** | **yes** |
+| **streamval** | **no** | **yes** | **CSV / JSONL / Parquet / Arrow / HTTP NDJSON / SSE** | **yes** |
 
 ## How it works
 

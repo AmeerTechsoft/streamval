@@ -114,3 +114,43 @@ async for r in astream_csv("users.csv", User):
 The async path is required when validation is one stage of a larger
 ``asyncio`` pipeline; the sync path is roughly an order of magnitude
 faster per row.
+
+## 9. Validate a streaming HTTP API
+
+`streamval[http]` adds an HTTP NDJSON adapter for REST endpoints that
+stream one JSON object per line (or Server-Sent Events).
+
+```bash
+pip install "streamval[http]"
+```
+
+```python
+from pydantic import BaseModel
+from streamval import stream_http_ndjson
+
+class Event(BaseModel):
+    id: int
+    name: str
+
+for result in stream_http_ndjson(
+    "https://example.com/events",
+    Event,
+    on_error="collect",
+    auth_token="sk-...",
+    timeout_seconds=30.0,
+    max_retries=3,
+):
+    if result.valid:
+        handle(result.data)
+```
+
+The adapter never buffers the full response — rows arrive one at a
+time and validation can fail fast on the very first invalid row.
+Retries on transport errors and `5xx` / `429` are linear with
+backoff; hard `4xx` (`401` / `403` / `404`) and JSON parse errors
+raise `StreamFetchError` immediately.
+
+For OpenAI / Anthropic / generic SSE streams, the
+`streamval.llm` module ships pre-configured wrappers with
+`extract_content` helpers. See [adapters.md](adapters.md#llm-streaming-helpers-streamvalllm)
+for details.
