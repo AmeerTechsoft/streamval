@@ -1,10 +1,10 @@
 """Optional-dependency guards.
 
-`orjson` and `polars` are soft dependencies; the package must remain
-fully functional without either. This module exposes boolean flags
-(`HAS_ORJSON`, `HAS_POLARS`) and helper raisers that produce
-informative ImportError messages when a caller explicitly requests a
-fast path that isn't installed.
+`orjson`, `polars`, and `httpx` are soft dependencies; the package
+must remain fully functional without any of them. This module exposes
+boolean flags (`HAS_ORJSON`, `HAS_POLARS`, `HAS_HTTPX`) and helper
+raisers that produce informative ImportError messages when a caller
+explicitly requests a fast path that isn't installed.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
     orjson: types.ModuleType | None
     polars: types.ModuleType | None
+    httpx: types.ModuleType | None
 
 try:
     import orjson as _orjson
@@ -34,6 +35,15 @@ try:
 except ImportError:
     polars = None
     HAS_POLARS = False
+
+try:
+    import httpx as _httpx
+
+    httpx = _httpx
+    HAS_HTTPX: bool = True
+except ImportError:
+    httpx = None
+    HAS_HTTPX = False
 
 
 def require_orjson() -> Any:
@@ -54,11 +64,23 @@ def require_polars() -> Any:
     return polars
 
 
+def require_httpx() -> Any:
+    """Return the imported ``httpx`` module or raise a helpful ImportError."""
+    if httpx is None:
+        raise ImportError(
+            "httpx is not installed. Install with: pip install streamval[http]"
+        )
+    return httpx
+
+
 __all__ = [
+    "HAS_HTTPX",
     "HAS_ORJSON",
     "HAS_POLARS",
+    "httpx",
     "orjson",
     "polars",
+    "require_httpx",
     "require_orjson",
     "require_polars",
 ]
