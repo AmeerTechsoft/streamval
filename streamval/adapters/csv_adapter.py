@@ -154,7 +154,13 @@ async def _scan_csv_polars(
     quote_char: str,
     batch_size: int,
 ) -> AsyncIterator[dict[str, Any]]:
-    """Polars streaming CSV scan, sliced into row dicts.
+    """Polars batched CSV scan, sliced into row dicts.
+
+    Uses ``pl.read_csv_batched`` so the file is read in fixed-size
+    chunks instead of materialising the whole DataFrame. v0.2.0
+    accidentally called ``lazy.collect(engine="streaming")`` which
+    in modern polars fully materialises the result and held the
+    entire file in memory for the duration of the iteration.
 
     Uses ``infer_schema_length=0`` so all columns come back as strings —
     that matches the stdlib path and lets ``schema/coerce.py`` own all
@@ -164,23 +170,20 @@ async def _scan_csv_polars(
         raise RuntimeError("polars is not installed")  # pragma: no cover
 
     pl = polars
-    lazy = pl.scan_csv(
+    reader = pl.read_csv_batched(
         str(path),
         separator=separator,
         quote_char=quote_char,
-        rechunk=False,
-        low_memory=True,
+        batch_size=batch_size,
         infer_schema_length=0,
     )
-    df = lazy.collect(engine="streaming")
-
-    n = df.height
-    offset = 0
-    while offset < n:
-        slice_df = df.slice(offset, batch_size)
-        for row in slice_df.to_dicts():
-            yield row
-        offset += batch_size
+    while True:
+        chunks = reader.next_batches(1)
+        if not chunks:
+            return
+        for chunk in chunks:
+            for row in chunk.to_dicts():
+                yield row
 
 
 # ARROW_FAST_PATH — scaffolded for PROMPT A3.
@@ -197,33 +200,46 @@ async def _scan_csv_polars_arrow(
     Not used by the row-mode :func:`stream_rows` entry point. PROMPT A3
     will wire this into :func:`stream_record_batches` and the batch
     validation pipeline. Columns are returned as native typed Arrow
-    arrays (numeric, boolean, string) when polars can infer them;
-    ``infer_schema_length`` is left at the polars default so type
-    inference happens.
+    arrays (all ``Utf8``). We pass ``infer_schema=False`` so Pydantic,
+    not polars, owns type coercion — otherwise a single non-integer
+    cell in an inferred ``i64`` column aborts the whole file with
+    ``polars.ComputeError`` instead of surfacing as a row-level
+    Pydantic ``int_parsing`` error.
     """
     if not HAS_POLARS or polars is None:
         raise RuntimeError("polars is not installed")  # pragma: no cover
 
     pl = polars
-    lazy = pl.scan_csv(
+    # ``infer_schema_length=0`` reads every column as ``Utf8``. We
+    # deliberately do *not* let polars guess the column types: if it
+    # guesses ``i64`` and the file contains a single non-integer cell
+    # (e.g. ``"not-an-int"``), polars refuses to read the file at all
+    # and raises ``ComputeError``. We want those rows to flow through
+    # to Pydantic so the user sees a normal per-row ``ValidationResult``
+    # with a Pydantic ``int_parsing`` error. Pydantic v2 happily
+    # coerces ``"42"`` into ``int`` / ``"3.14"`` into ``float`` / etc.,
+    # so the user-visible behaviour is unchanged.
+    #
+    # We use ``pl.read_csv_batched`` rather than
+    # ``pl.scan_csv(...).collect(engine="streaming")``: the latter
+    # materialises the whole DataFrame into memory in modern polars,
+    # which broke the bounded-memory contract for large files.
+    reader = pl.read_csv_batched(
         str(path),
         separator=separator,
         quote_char=quote_char,
-        rechunk=False,
-        low_memory=True,
+        batch_size=batch_size,
+        infer_schema_length=0,
+        columns=columns,
     )
-    if columns is not None:
-        lazy = lazy.select(columns)
-    df = lazy.collect(engine="streaming")
-
-    n = df.height
-    offset = 0
-    while offset < n:
-        slice_df = df.slice(offset, batch_size)
-        table = slice_df.to_arrow()
-        for batch in table.to_batches():
-            yield batch
-        offset += batch_size
+    while True:
+        chunks = reader.next_batches(1)
+        if not chunks:
+            return
+        for chunk in chunks:
+            table = chunk.to_arrow()
+            for batch in table.to_batches():
+                yield batch
 
 
 async def stream_record_batches(
@@ -363,22 +379,24 @@ def _scan_csv_polars_sync(
     quote_char: str,
     batch_size: int,
 ) -> Iterator[dict[str, Any]]:
-    """Sync mirror of :func:`_scan_csv_polars`."""
+    """Sync mirror of :func:`_scan_csv_polars`.
+
+    Uses :func:`polars.read_csv_batched` so the file is streamed in
+    chunks; see :func:`_scan_csv_polars` for the v0.2 regression
+    fix this addresses.
+    """
     pl = polars
     assert pl is not None  # guarded by caller
-    lazy = pl.scan_csv(
+    reader = pl.read_csv_batched(
         str(path),
         separator=separator,
         quote_char=quote_char,
-        rechunk=False,
-        low_memory=True,
+        batch_size=batch_size,
         infer_schema_length=0,
     )
-    df = lazy.collect(engine="streaming")
-
-    n = df.height
-    offset = 0
-    while offset < n:
-        slice_df = df.slice(offset, batch_size)
-        yield from slice_df.to_dicts()
-        offset += batch_size
+    while True:
+        chunks = reader.next_batches(1)
+        if not chunks:
+            return
+        for chunk in chunks:
+            yield from chunk.to_dicts()

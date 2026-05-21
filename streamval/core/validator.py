@@ -224,8 +224,9 @@ class StreamValidator:
             ):
                 yield r
             return
+        row_kwargs = self._row_adapter_kwargs(adapter_kwargs)
         async for r in self._stream(
-            csv_adapter.stream_rows(path, **adapter_kwargs), SourceFormat.CSV
+            csv_adapter.stream_rows(path, **row_kwargs), SourceFormat.CSV
         ):
             yield r
 
@@ -305,7 +306,8 @@ class StreamValidator:
             kwargs = _arrow_kwargs(adapter_kwargs)
             batches = _stream_csv_record_batches_sync(path, **kwargs)
             return self._stream_arrow_sync(batches, SourceFormat.CSV)
-        rows = csv_adapter.stream_rows_sync(path, **adapter_kwargs)
+        row_kwargs = self._row_adapter_kwargs(adapter_kwargs)
+        rows = csv_adapter.stream_rows_sync(path, **row_kwargs)
         return self._stream_sync(rows, SourceFormat.CSV)
 
     def stream_jsonl(
@@ -348,6 +350,24 @@ class StreamValidator:
         config = _coerce_http_config(url_or_config, config_kwargs)
         rows = http_ndjson_adapter.stream_rows_sync(config)
         return self._stream_sync(rows, SourceFormat.HTTP_NDJSON)
+
+    def _row_adapter_kwargs(
+        self, adapter_kwargs: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Forward the validator's ``batch_size`` to the row-mode adapter.
+
+        The CSV polars adapter sizes its Rust-side row chunk by
+        ``batch_size`` (it allocates one chunk of that many rows at a
+        time). When the caller doesn't pass ``batch_size`` explicitly,
+        the adapter default of 10,000 used to balloon row-mode peak
+        memory to ~4 MB independent of the validator's own
+        ``batch_size``. Forwarding the validator-level value keeps the
+        single-source-of-truth contract that ``batch_size`` is the one
+        knob the user reasons about.
+        """
+        if "batch_size" in adapter_kwargs:
+            return adapter_kwargs
+        return {**adapter_kwargs, "batch_size": self._batch_size}
 
 
 def _coerce_http_config(
