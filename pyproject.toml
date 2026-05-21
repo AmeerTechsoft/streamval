@@ -50,7 +50,7 @@ docs = [
 
 [project.urls]
 Homepage = "https://github.com/AmeerTechsoft/streamval"
-Documentation = "https://github.com/AmeerTechsoft/streamval#readme"
+Documentation = "https://streamval.readthedocs.io/en/latest/"
 Repository = "https://github.com/AmeerTechsoft/streamval"
 Issues = "https://github.com/AmeerTechsoft/streamval/issues"
 Changelog = "https://github.com/AmeerTechsoft/streamval/blob/main/CHANGELOG.md"

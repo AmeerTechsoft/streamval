@@ -1,0 +1,163 @@
+# MkDocs configuration for streamval
+# https://www.mkdocs.org/user-guide/configuration/
+#
+# Local preview:
+#   pip install -e ".[docs]"
+#   mkdocs serve          # http://127.0.0.1:8000
+#   mkdocs build --strict # CI-style build with warnings as errors
+
+site_name: streamval
+site_description: >-
+  Streaming, Pydantic-backed validation for CSV, JSONL, Parquet, Arrow,
+  HTTP NDJSON, and LLM SSE streams — bounded memory, row-by-row.
+site_author: Ameer Techsoft
+site_url: https://streamval.readthedocs.io/
+
+repo_name: AmeerTechsoft/streamval
+repo_url: https://github.com/AmeerTechsoft/streamval
+edit_uri: edit/main/docs/
+
+copyright: Copyright &copy; 2026 Ameer Techsoft — MIT License
+
+# All guides live under docs/ (this file sits at the repo root).
+docs_dir: docs
+strict: false
+
+theme:
+  name: material
+  language: en
+  logo: material:shield-check
+  favicon: material:shield-check
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font:
+    text: Inter
+    code: JetBrains Mono
+  features:
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.path
+    - navigation.top
+    - navigation.footer
+    - navigation.indexes
+    - toc.follow
+    - toc.integrate
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search:
+      lang: en
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths: [.]
+          options:
+            docstring_style: google
+            docstring_section_style: spacy
+            show_root_heading: true
+            show_root_full_path: false
+            show_source: true
+            show_signature_annotations: true
+            separate_signature: true
+            line_length: 88
+            merge_init_into_class: true
+            members_order: source
+            filters:
+              - "!^_"
+            inherited_members: false
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/AmeerTechsoft/streamval
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/streamval/
+  generator: false
+
+nav:
+  - Home: index.md
+
+  - Getting started:
+      - Quickstart: quickstart.md
+      - Schemas and models: schemas.md
+
+  - User guide:
+      - Running validation: validation.md
+      - Results, errors, and logging: results-and-errors.md
+      - Error strategies: error-strategies.md
+
+  - Reference:
+      - Adapters: adapters.md
+      - API overview: api-reference.md
+      - Python API (auto-generated): reference/python-api.md
+      - Custom adapters: custom-adapters.md
+
+  - Development:
+      - Benchmarks: benchmarks.md
+      - Changelog: https://github.com/AmeerTechsoft/streamval/blob/main/CHANGELOG.md
+      - Repository: https://github.com/AmeerTechsoft/streamval

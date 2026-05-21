@@ -12,6 +12,7 @@ venv/
 .pytest_cache/
 .coverage
 htmlcov/
+site/
 .tox/
 *.parquet
 *.feather

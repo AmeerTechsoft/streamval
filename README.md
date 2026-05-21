@@ -143,7 +143,9 @@ one row dict at a time:
 
 ## Documentation
 
-Full guides live in [`docs/`](docs/index.md):
+**Online docs:** [streamval.readthedocs.io](https://streamval.readthedocs.io/en/latest/)
+
+Full guides (also in [`docs/`](docs/index.md)):
 
 | Guide | Topics |
 |---|---|

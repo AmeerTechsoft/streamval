@@ -1,0 +1,39 @@
+# Read the Docs configuration file for streamval
+# https://docs.readthedocs.io/en/stable/config-file/v2.html
+#
+# Connect this repository at https://readthedocs.org/dashboard/
+# Import project → point at this repo → RTD reads this file automatically.
+#
+# Build locally (same as RTD):
+#   pip install -e ".[docs]"
+#   mkdocs serve
+
+version: 2
+
+# Build documentation in the docs/ directory with MkDocs
+# https://docs.readthedocs.io/en/stable/build-config.html
+build:
+  os: ubuntu-22.04
+  tools:
+    python: "3.12"
+
+mkdocs:
+  configuration: mkdocs.yml
+  # Set to true once the doc set is stable to catch broken links early.
+  fail_on_warning: false
+
+# Install streamval (for mkdocstrings) and the docs extra (MkDocs Material).
+python:
+  install:
+    - method: pip
+      path: .
+      extra_requirements:
+        - docs
+
+# Optional: pin the default version label shown to visitors.
+# Uncomment after the first successful build on Read the Docs.
+# build:
+#   ...
+#   jobs:
+#     post_build:
+#       - write "latest" to .readthedocs-custom-redirects if needed

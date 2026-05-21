@@ -21,6 +21,22 @@ adapter → run validation → handle results, errors, and logs.
 | [API reference](api-reference.md) | Public exports and signatures |
 | [Quickstart](quickstart.md) | Minimal copy-paste examples |
 | [Benchmarks](benchmarks.md) | Throughput and memory measurement |
+| [Python API (auto-generated)](reference/python-api.md) | Docstrings rendered by mkdocstrings |
+
+---
+
+## Building docs locally
+
+Read the Docs builds this site with [MkDocs Material](https://squidfunk.github.io/mkdocs-material/).
+
+```bash
+pip install -e ".[docs]"
+mkdocs serve
+```
+
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Production builds run
+automatically on [Read the Docs](https://streamval.readthedocs.io/) when
+`main` is updated.
 
 ---
 
