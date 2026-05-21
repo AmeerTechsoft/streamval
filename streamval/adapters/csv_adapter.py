@@ -147,6 +147,39 @@ async def _scan_csv_aiofiles(
                 yield _zip_row(header, row)
 
 
+def _iter_polars_csv_chunks(
+    path: Path,
+    *,
+    separator: str,
+    quote_char: str,
+    batch_size: int,
+    columns: list[str] | None = None,
+) -> Iterator[Any]:
+    """Yield polars ``DataFrame`` chunks from a CSV without full materialisation.
+
+    Uses ``scan_csv(...).collect_batches(chunk_size=...)``, the supported
+    replacement for the deprecated ``read_csv_batched`` API. All columns
+    are read as strings (``infer_schema_length=0``) so Pydantic owns
+    type coercion and malformed cells surface as row-level validation
+    errors instead of ``polars.ComputeError``.
+    """
+    pl = polars
+    if pl is None:
+        raise RuntimeError("polars is not installed")  # pragma: no cover
+
+    lazy = pl.scan_csv(
+        str(path),
+        separator=separator,
+        quote_char=quote_char,
+        rechunk=False,
+        low_memory=True,
+        infer_schema_length=0,
+    )
+    if columns is not None:
+        lazy = lazy.select(columns)
+    yield from lazy.collect_batches(chunk_size=batch_size)
+
+
 async def _scan_csv_polars(
     path: Path,
     *,
@@ -156,34 +189,20 @@ async def _scan_csv_polars(
 ) -> AsyncIterator[dict[str, Any]]:
     """Polars batched CSV scan, sliced into row dicts.
 
-    Uses ``pl.read_csv_batched`` so the file is read in fixed-size
-    chunks instead of materialising the whole DataFrame. v0.2.0
-    accidentally called ``lazy.collect(engine="streaming")`` which
-    in modern polars fully materialises the result and held the
-    entire file in memory for the duration of the iteration.
-
-    Uses ``infer_schema_length=0`` so all columns come back as strings —
+    Streams via ``scan_csv().collect_batches()`` in fixed-size chunks
+    rather than materialising the whole file. Uses
+    ``infer_schema_length=0`` so all columns come back as strings —
     that matches the stdlib path and lets ``schema/coerce.py`` own all
     type conversion.
     """
-    if not HAS_POLARS or polars is None:
-        raise RuntimeError("polars is not installed")  # pragma: no cover
-
-    pl = polars
-    reader = pl.read_csv_batched(
-        str(path),
+    for chunk in _iter_polars_csv_chunks(
+        path,
         separator=separator,
         quote_char=quote_char,
         batch_size=batch_size,
-        infer_schema_length=0,
-    )
-    while True:
-        chunks = reader.next_batches(1)
-        if not chunks:
-            return
-        for chunk in chunks:
-            for row in chunk.to_dicts():
-                yield row
+    ):
+        for row in chunk.to_dicts():
+            yield row
 
 
 # ARROW_FAST_PATH — scaffolded for PROMPT A3.
@@ -200,46 +219,22 @@ async def _scan_csv_polars_arrow(
     Not used by the row-mode :func:`stream_rows` entry point. PROMPT A3
     will wire this into :func:`stream_record_batches` and the batch
     validation pipeline. Columns are returned as native typed Arrow
-    arrays (all ``Utf8``). We pass ``infer_schema=False`` so Pydantic,
-    not polars, owns type coercion — otherwise a single non-integer
-    cell in an inferred ``i64`` column aborts the whole file with
-    ``polars.ComputeError`` instead of surfacing as a row-level
-    Pydantic ``int_parsing`` error.
+    arrays (all ``Utf8``). ``infer_schema_length=0`` on the scan keeps
+    every column as string so Pydantic owns type coercion — a single
+    non-integer cell in an inferred ``i64`` column would otherwise abort
+    the whole file with ``polars.ComputeError`` instead of surfacing as
+    a row-level Pydantic ``int_parsing`` error.
     """
-    if not HAS_POLARS or polars is None:
-        raise RuntimeError("polars is not installed")  # pragma: no cover
-
-    pl = polars
-    # ``infer_schema_length=0`` reads every column as ``Utf8``. We
-    # deliberately do *not* let polars guess the column types: if it
-    # guesses ``i64`` and the file contains a single non-integer cell
-    # (e.g. ``"not-an-int"``), polars refuses to read the file at all
-    # and raises ``ComputeError``. We want those rows to flow through
-    # to Pydantic so the user sees a normal per-row ``ValidationResult``
-    # with a Pydantic ``int_parsing`` error. Pydantic v2 happily
-    # coerces ``"42"`` into ``int`` / ``"3.14"`` into ``float`` / etc.,
-    # so the user-visible behaviour is unchanged.
-    #
-    # We use ``pl.read_csv_batched`` rather than
-    # ``pl.scan_csv(...).collect(engine="streaming")``: the latter
-    # materialises the whole DataFrame into memory in modern polars,
-    # which broke the bounded-memory contract for large files.
-    reader = pl.read_csv_batched(
-        str(path),
+    for chunk in _iter_polars_csv_chunks(
+        path,
         separator=separator,
         quote_char=quote_char,
         batch_size=batch_size,
-        infer_schema_length=0,
         columns=columns,
-    )
-    while True:
-        chunks = reader.next_batches(1)
-        if not chunks:
-            return
-        for chunk in chunks:
-            table = chunk.to_arrow()
-            for batch in table.to_batches():
-                yield batch
+    ):
+        table = chunk.to_arrow()
+        for batch in table.to_batches():
+            yield batch
 
 
 async def stream_record_batches(
@@ -379,24 +374,14 @@ def _scan_csv_polars_sync(
     quote_char: str,
     batch_size: int,
 ) -> Iterator[dict[str, Any]]:
-    """Sync mirror of :func:`_scan_csv_polars`.
-
-    Uses :func:`polars.read_csv_batched` so the file is streamed in
-    chunks; see :func:`_scan_csv_polars` for the v0.2 regression
-    fix this addresses.
-    """
-    pl = polars
-    assert pl is not None  # guarded by caller
-    reader = pl.read_csv_batched(
-        str(path),
-        separator=separator,
-        quote_char=quote_char,
-        batch_size=batch_size,
-        infer_schema_length=0,
+    """Sync mirror of :func:`_scan_csv_polars`."""
+    yield from (
+        row
+        for chunk in _iter_polars_csv_chunks(
+            path,
+            separator=separator,
+            quote_char=quote_char,
+            batch_size=batch_size,
+        )
+        for row in chunk.to_dicts()
     )
-    while True:
-        chunks = reader.next_batches(1)
-        if not chunks:
-            return
-        for chunk in chunks:
-            yield from chunk.to_dicts()

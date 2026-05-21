@@ -217,14 +217,14 @@ class StreamValidator:
     ) -> AsyncIterator[ValidationResult]:
         """Validate a CSV file asynchronously."""
         if self._use_arrow:
-            kwargs = _arrow_kwargs(adapter_kwargs)
+            kwargs = self._adapter_batch_kwargs(adapter_kwargs)
             async for r in self._stream_arrow(
                 csv_adapter.stream_record_batches(path, **kwargs),
                 SourceFormat.CSV,
             ):
                 yield r
             return
-        row_kwargs = self._row_adapter_kwargs(adapter_kwargs)
+        row_kwargs = self._adapter_batch_kwargs(adapter_kwargs)
         async for r in self._stream(
             csv_adapter.stream_rows(path, **row_kwargs), SourceFormat.CSV
         ):
@@ -248,7 +248,7 @@ class StreamValidator:
     ) -> AsyncIterator[ValidationResult]:
         """Validate a Parquet file asynchronously."""
         if self._use_arrow:
-            kwargs = _arrow_kwargs(adapter_kwargs, default_batch_size=10_000)
+            kwargs = self._adapter_batch_kwargs(adapter_kwargs)
             async for r in self._stream_arrow(
                 parquet_adapter.stream_record_batches(path, **kwargs),
                 SourceFormat.PARQUET,
@@ -303,10 +303,10 @@ class StreamValidator:
         construction in the adapter loop.
         """
         if self._use_arrow:
-            kwargs = _arrow_kwargs(adapter_kwargs)
+            kwargs = self._adapter_batch_kwargs(adapter_kwargs)
             batches = _stream_csv_record_batches_sync(path, **kwargs)
             return self._stream_arrow_sync(batches, SourceFormat.CSV)
-        row_kwargs = self._row_adapter_kwargs(adapter_kwargs)
+        row_kwargs = self._adapter_batch_kwargs(adapter_kwargs)
         rows = csv_adapter.stream_rows_sync(path, **row_kwargs)
         return self._stream_sync(rows, SourceFormat.CSV)
 
@@ -326,7 +326,7 @@ class StreamValidator:
     ) -> Iterator[ValidationResult]:
         """Streaming sync iterator over a Parquet file."""
         if self._use_arrow:
-            kwargs = _arrow_kwargs(adapter_kwargs, default_batch_size=10_000)
+            kwargs = self._adapter_batch_kwargs(adapter_kwargs)
             batches = parquet_adapter.stream_record_batches_sync(path, **kwargs)
             return self._stream_arrow_sync(batches, SourceFormat.PARQUET)
         rows = parquet_adapter.stream_rows_sync(path, **adapter_kwargs)
@@ -351,23 +351,20 @@ class StreamValidator:
         rows = http_ndjson_adapter.stream_rows_sync(config)
         return self._stream_sync(rows, SourceFormat.HTTP_NDJSON)
 
-    def _row_adapter_kwargs(
+    def _adapter_batch_kwargs(
         self, adapter_kwargs: dict[str, Any]
     ) -> dict[str, Any]:
-        """Forward the validator's ``batch_size`` to the row-mode adapter.
+        """Forward the validator's ``batch_size`` to CSV/Parquet adapters.
 
-        The CSV polars adapter sizes its Rust-side row chunk by
-        ``batch_size`` (it allocates one chunk of that many rows at a
-        time). When the caller doesn't pass ``batch_size`` explicitly,
-        the adapter default of 10,000 used to balloon row-mode peak
-        memory to ~4 MB independent of the validator's own
-        ``batch_size``. Forwarding the validator-level value keeps the
-        single-source-of-truth contract that ``batch_size`` is the one
-        knob the user reasons about.
+        The CSV polars adapter sizes its Rust-side chunk by ``batch_size``.
+        When the caller doesn't pass ``batch_size`` explicitly, inject the
+        validator-level value so ``batch_size`` is the single knob the user
+        reasons about (row mode and Arrow mode).
         """
+        out = _arrow_kwargs(adapter_kwargs)
         if "batch_size" in adapter_kwargs:
-            return adapter_kwargs
-        return {**adapter_kwargs, "batch_size": self._batch_size}
+            return out
+        return {**out, "batch_size": self._batch_size}
 
 
 def _coerce_http_config(

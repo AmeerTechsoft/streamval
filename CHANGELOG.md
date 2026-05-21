@@ -5,6 +5,27 @@ All notable changes to streamval will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-05-21
+
+### Fixed
+- **Row-mode memory regression (v0.2.0):** `StreamValidator.batch_size`
+  was not forwarded to the CSV polars adapter, so polars always chunked
+  at its default of 10,000 rows. Peak memory on 1M rows jumped from
+  ~0.41 MB to ~4.43 MB. Row mode at the default `batch_size=1000` is
+  back to ~0.47 MB on CI.
+- **CSV Arrow path type inference:** polars no longer infers column types
+  during CSV scan (`infer_schema_length=0`). A single non-integer cell in
+  an otherwise integer column no longer aborts the whole file with
+  `polars.ComputeError`; it surfaces as a normal Pydantic validation
+  error per row.
+- **Arrow CSV batch_size:** validator `batch_size` is now forwarded to
+  the CSV Arrow adapter the same way as row mode.
+
+### Changed
+- Migrated CSV polars paths from deprecated `read_csv_batched` to
+  `scan_csv().collect_batches()`, removing deprecation warnings on
+  polars 1.40+.
+
 ## [0.2.0] - 2026-05-21
 
 ### Added
