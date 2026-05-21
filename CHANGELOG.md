@@ -5,6 +5,14 @@ All notable changes to streamval will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-05-21
+
+### Added
+- **User documentation:** end-to-end guides covering schema definition,
+  running validation (all formats, sync/async), results and exceptions,
+  error strategies, logging, and a full API reference. See
+  [`docs/index.md`](docs/index.md).
+
 ## [0.2.1] - 2026-05-21
 
 ### Fixed

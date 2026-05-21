@@ -1,5 +1,8 @@
 # Quickstart
 
+For the full guide — schema design, every adapter, error strategies,
+results, and logging — start at the [documentation index](index.md).
+
 ## 1. Install
 
 ```bash
