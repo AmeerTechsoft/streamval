@@ -204,7 +204,7 @@ for r in stream_http_ndjson(config, EventModel):
     ...
 ```
 
-See [Adapters reference](adapters.md) for every `HttpNdjsonConfig`
+See [Adapters reference](../reference/adapters.md) for every `HttpNdjsonConfig`
 field, retry behaviour, and SSE parsing.
 
 ---

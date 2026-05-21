@@ -162,7 +162,7 @@ accepted.
 
 ## Next steps
 
-- [Running validation](validation.md) — wire your schema into
+- [Running validation](../user-guide/validation.md) — wire your schema into
   `StreamValidator` or `stream_csv`.
-- [Results, errors, and logging](results-and-errors.md) — read `ValidationResult`
+- [Results, errors, and logging](../user-guide/results-and-errors.md) — read `ValidationResult`
   and handle failures.

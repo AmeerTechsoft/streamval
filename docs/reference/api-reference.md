@@ -327,8 +327,8 @@ logging.getLogger("streamval").setLevel(logging.WARNING)
 
 ## Related guides
 
-- [Schemas and models](schemas.md)
-- [Running validation](validation.md)
-- [Results, errors, and logging](results-and-errors.md)
-- [Error strategies](error-strategies.md)
+- [Schemas and models](../getting-started/schemas.md)
+- [Running validation](../user-guide/validation.md)
+- [Results, errors, and logging](../user-guide/results-and-errors.md)
+- [Error strategies](../user-guide/error-strategies.md)
 - [Adapters reference](adapters.md)

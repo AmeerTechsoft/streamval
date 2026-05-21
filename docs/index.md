@@ -13,15 +13,25 @@ adapter → run validation → handle results, errors, and logs.
 
 | Guide | What you'll learn |
 |---|---|
-| [Schemas and models](schemas.md) | Defining Pydantic models, type coercion per format, nested fields |
-| [Running validation](validation.md) | `StreamValidator`, convenience functions, sync/async, all formats |
-| [Results, errors, and logging](results-and-errors.md) | `ValidationResult`, exceptions, stats, configuring loggers |
-| [Error strategies](error-strategies.md) | `fail_fast`, `collect`, `skip`, custom handlers |
-| [Adapters reference](adapters.md) | Per-format options, HTTP/LLM configuration |
-| [API reference](api-reference.md) | Public exports and signatures |
-| [Quickstart](quickstart.md) | Minimal copy-paste examples |
-| [Benchmarks](benchmarks.md) | Throughput and memory measurement |
+| [Getting started](getting-started/index.md) | Install, quickstart, schema design |
+| [User guide](user-guide/index.md) | Validation, results, error strategies |
+| [Reference](reference/index.md) | Adapters, API, Python docstrings |
+| [Development](development/index.md) | Benchmarks, changelog, contributing |
+
+### All pages
+
+| Guide | What you'll learn |
+|---|---|
+| [Quickstart](getting-started/quickstart.md) | Minimal copy-paste examples |
+| [Schemas and models](getting-started/schemas.md) | Pydantic models, type coercion per format |
+| [Running validation](user-guide/validation.md) | `StreamValidator`, sync/async, all formats |
+| [Results, errors, and logging](user-guide/results-and-errors.md) | `ValidationResult`, exceptions, stats, loggers |
+| [Error strategies](user-guide/error-strategies.md) | `fail_fast`, `collect`, `skip`, custom handlers |
+| [Adapters reference](reference/adapters.md) | Per-format options, HTTP/LLM configuration |
+| [API reference](reference/api-reference.md) | Public exports and signatures |
 | [Python API (auto-generated)](reference/python-api.md) | Docstrings rendered by mkdocstrings |
+| [Benchmarks](development/benchmarks.md) | Throughput and memory measurement |
+| [Changelog](development/changelog.md) | Release history |
 
 ---
 
@@ -72,8 +82,8 @@ for result in stream_csv("orders.csv", Order, on_error="collect"):
         log_bad_row(result.row_index, result.errors)
 ```
 
-See [Schemas and models](schemas.md) for schema design and
-[Running validation](validation.md) for every entry point and option.
+See [Schemas and models](getting-started/schemas.md) for schema design and
+[Running validation](user-guide/validation.md) for every entry point and option.
 
 ---
 

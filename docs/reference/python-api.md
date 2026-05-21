@@ -2,7 +2,7 @@
 
 This page is generated from docstrings by [mkdocstrings](https://mkdocstrings.github.io/)
 during the MkDocs / Read the Docs build. For narrative guides, see
-[API overview](../api-reference.md).
+[API overview](api-reference.md).
 
 ---
 

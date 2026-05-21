@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **User documentation:** end-to-end guides covering schema definition,
   running validation (all formats, sync/async), results and exceptions,
   error strategies, logging, and a full API reference. See
-  [`docs/index.md`](docs/index.md).
+  [`docs/index.md`](https://github.com/AmeerTechsoft/streamval/blob/main/docs/index.md).
 
 ## [0.2.1] - 2026-05-21
 

@@ -1,7 +1,7 @@
 # Quickstart
 
 For the full guide — schema design, every adapter, error strategies,
-results, and logging — start at the [documentation index](index.md).
+results, and logging — start at the [documentation home](../index.md).
 
 ## 1. Install
 
@@ -155,5 +155,5 @@ raise `StreamFetchError` immediately.
 
 For OpenAI / Anthropic / generic SSE streams, the
 `streamval.llm` module ships pre-configured wrappers with
-`extract_content` helpers. See [adapters.md](adapters.md#llm-streaming-helpers-streamvalllm)
+`extract_content` helpers. See [Adapters — LLM](../reference/adapters.md#llm-streaming-helpers-streamvalllm)
 for details.

@@ -16,7 +16,7 @@ payload into memory.
 
 ## CSV / JSONL / Parquet / Arrow
 
-See `quickstart.md` for the basic file-adapter usage. The notes here
+See [Quickstart](../getting-started/quickstart.md) for the basic file-adapter usage. The notes here
 focus on the HTTP NDJSON adapter and the LLM helpers.
 
 ## HTTP NDJSON adapter

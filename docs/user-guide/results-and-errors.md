@@ -282,4 +282,4 @@ logging.getLogger("streamval").setLevel(logging.ERROR)
 
 - [Error strategies](error-strategies.md) — deep dive on each strategy
   and custom handlers
-- [Schemas and models](schemas.md) — design models that fail clearly
+- [Schemas and models](../getting-started/schemas.md) — design models that fail clearly

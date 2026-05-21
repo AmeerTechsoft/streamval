@@ -150,13 +150,10 @@ Full guides (also in [`docs/`](docs/index.md)):
 | Guide | Topics |
 |---|---|
 | [Documentation index](docs/index.md) | End-to-end workflow, install, doc map |
-| [Schemas and models](docs/schemas.md) | Pydantic models, coercion per format |
-| [Running validation](docs/validation.md) | `StreamValidator`, sync/async, all formats |
-| [Results, errors, and logging](docs/results-and-errors.md) | `ValidationResult`, exceptions, stats, loggers |
-| [Error strategies](docs/error-strategies.md) | `fail_fast`, `collect`, `skip`, custom handlers |
-| [Adapters reference](docs/adapters.md) | CSV/JSONL/Parquet/HTTP options |
-| [API reference](docs/api-reference.md) | Public exports and signatures |
-| [Quickstart](docs/quickstart.md) | Copy-paste examples |
+| [Getting started](docs/getting-started/index.md) | Quickstart and schema design |
+| [User guide](docs/user-guide/index.md) | Validation, results, error strategies |
+| [Reference](docs/reference/index.md) | Adapters, API, Python docstrings |
+| [Development](docs/development/index.md) | Benchmarks and changelog |
 
 ## Contributing
 
