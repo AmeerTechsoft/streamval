@@ -18,6 +18,7 @@ Public surface (everything else is internal):
 
 from __future__ import annotations
 
+from streamval import llm
 from streamval.adapters.http_ndjson_adapter import HttpNdjsonConfig
 from streamval.core.result import (
     FieldError,
@@ -55,6 +56,7 @@ __all__ = [
     "astream_http_ndjson",
     "astream_jsonl",
     "astream_parquet",
+    "llm",
     "stream_csv",
     "stream_http_ndjson",
     "stream_jsonl",
