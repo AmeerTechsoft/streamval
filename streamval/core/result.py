@@ -154,3 +154,48 @@ class StreamValidationError(Exception):
             f"StreamValidationError(message={self.message!r}, "
             f"results=<{len(self.results)} items>)"
         )
+
+
+class StreamFetchError(Exception):
+    """Raised when the HTTP NDJSON adapter cannot deliver a stream.
+
+    Distinguishes transport-level failures (network, retry exhaustion,
+    auth) from per-row validation failures (which still flow through
+    :class:`ValidationResult`).
+
+    Attributes:
+        message: Human-readable summary.
+        url: The URL the adapter was attempting to stream from.
+        status_code: HTTP status of the final attempt, if a response
+            arrived. ``None`` for connect / timeout failures.
+        attempt_count: Number of attempts made (1-based). For
+            non-retryable errors (401/403/404) this is ``1``.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        url: str,
+        status_code: int | None = None,
+        attempt_count: int = 1,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.url = url
+        self.status_code = status_code
+        self.attempt_count = attempt_count
+
+    def __str__(self) -> str:
+        parts = [self.message, f"url={self.url}"]
+        if self.status_code is not None:
+            parts.append(f"status={self.status_code}")
+        parts.append(f"attempts={self.attempt_count}")
+        return " | ".join(parts)
+
+    def __repr__(self) -> str:
+        return (
+            f"StreamFetchError(message={self.message!r}, url={self.url!r}, "
+            f"status_code={self.status_code!r}, "
+            f"attempt_count={self.attempt_count!r})"
+        )

@@ -1,21 +1,15 @@
-"""Unit tests for :class:`HttpNdjsonConfig` (PROMPT B1).
+"""Unit tests for :class:`HttpNdjsonConfig`.
 
-B1 is config + scaffold only. The actual streaming is implemented in
-PROMPT B2; here we cover constructor defaults, ``from_url`` sugar, and
-input validation. The scaffolded ``stream_rows`` coroutine is also
-asserted to raise :class:`NotImplementedError` so the contract is
-explicit.
+Covers constructor defaults, ``from_url`` sugar, and input validation
+of the HTTP NDJSON adapter's configuration. The streaming logic itself
+lives in :mod:`tests.unit.adapters.test_http_ndjson_streaming`.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from streamval.adapters.http_ndjson_adapter import (
-    HttpNdjsonConfig,
-    stream_rows,
-    stream_rows_sync,
-)
+from streamval.adapters.http_ndjson_adapter import HttpNdjsonConfig
 
 
 class TestHttpNdjsonConfigDefaults:
@@ -111,17 +105,3 @@ class TestValidation:
             HttpNdjsonConfig(url="https://x/s", max_lines=-5)
 
 
-class TestScaffoldedStreams:
-    """B2 will implement these; B1 keeps the contract explicit."""
-
-    async def test_stream_rows_not_implemented(self) -> None:
-        cfg = HttpNdjsonConfig(url="https://example.com/s")
-        with pytest.raises(NotImplementedError, match="PROMPT B2"):
-            async for _ in stream_rows(cfg):
-                pass
-
-    def test_stream_rows_sync_not_implemented(self) -> None:
-        cfg = HttpNdjsonConfig(url="https://example.com/s")
-        with pytest.raises(NotImplementedError, match="PROMPT B2"):
-            for _ in stream_rows_sync(cfg):
-                pass

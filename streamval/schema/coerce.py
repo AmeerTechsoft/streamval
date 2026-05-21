@@ -33,6 +33,7 @@ class SourceFormat(StrEnum):
     JSONL = "jsonl"
     PARQUET = "parquet"
     ARROW = "arrow"
+    HTTP_NDJSON = "http_ndjson"
 
 
 _TRUTHY = {"true", "t", "yes", "y", "1"}
@@ -98,7 +99,8 @@ def coerce_row(
             out[name] = _coerce_str(value, target)
         return out
 
-    # JSONL: only datetime / date strings need help.
+    # JSONL / HTTP_NDJSON: values arrive JSON-typed; only datetime /
+    # date strings need help.
     out = dict(raw)
     for name, target in targets:
         if target is not _dt.datetime and target is not _dt.date:

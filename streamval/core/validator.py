@@ -21,9 +21,11 @@ from pydantic import BaseModel
 from streamval.adapters import (
     arrow_adapter,
     csv_adapter,
+    http_ndjson_adapter,
     jsonl_adapter,
     parquet_adapter,
 )
+from streamval.adapters.http_ndjson_adapter import HttpNdjsonConfig
 from streamval.core.buffer import (
     BatchBuffer,
     ParallelBatchProcessor,
@@ -269,6 +271,24 @@ class StreamValidator:
         ):
             yield r
 
+    async def astream_http_ndjson(
+        self,
+        url_or_config: str | HttpNdjsonConfig,
+        **config_kwargs: Any,
+    ) -> AsyncIterator[ValidationResult]:
+        """Validate an NDJSON / SSE HTTP stream asynchronously.
+
+        ``url_or_config`` may be a URL string (in which case
+        ``config_kwargs`` build the :class:`HttpNdjsonConfig`) or a
+        prebuilt :class:`HttpNdjsonConfig` instance.
+        """
+        config = _coerce_http_config(url_or_config, config_kwargs)
+        async for r in self._stream(
+            http_ndjson_adapter.stream_rows(config),
+            SourceFormat.HTTP_NDJSON,
+        ):
+            yield r
+
     def stream_csv(
         self,
         path: str | Path,
@@ -318,6 +338,29 @@ class StreamValidator:
         """Streaming sync iterator over an Arrow IPC / Feather file."""
         rows = arrow_adapter.stream_rows_sync(path, **adapter_kwargs)
         return self._stream_sync(rows, SourceFormat.ARROW)
+
+    def stream_http_ndjson(
+        self,
+        url_or_config: str | HttpNdjsonConfig,
+        **config_kwargs: Any,
+    ) -> Iterator[ValidationResult]:
+        """Streaming sync iterator over an NDJSON / SSE HTTP stream."""
+        config = _coerce_http_config(url_or_config, config_kwargs)
+        rows = http_ndjson_adapter.stream_rows_sync(config)
+        return self._stream_sync(rows, SourceFormat.HTTP_NDJSON)
+
+
+def _coerce_http_config(
+    url_or_config: str | HttpNdjsonConfig,
+    extra_kwargs: dict[str, Any],
+) -> HttpNdjsonConfig:
+    if isinstance(url_or_config, HttpNdjsonConfig):
+        if extra_kwargs:
+            raise TypeError(
+                "cannot pass both an HttpNdjsonConfig and extra kwargs"
+            )
+        return url_or_config
+    return HttpNdjsonConfig.from_url(url_or_config, **extra_kwargs)
 
 
 def _run_coro(coro: Any) -> Any:
@@ -405,6 +448,29 @@ async def astream_parquet(
         yield r
 
 
+def stream_http_ndjson(
+    url_or_config: str | HttpNdjsonConfig,
+    schema: type[BaseModel],
+    **kwargs: Any,
+) -> Iterator[ValidationResult]:
+    """Convenience: build a :class:`StreamValidator` and validate an HTTP NDJSON stream."""  # noqa: E501
+    sv_kwargs, adapter_kwargs = _split_kwargs(kwargs)
+    sv = StreamValidator(schema, **sv_kwargs)
+    return sv.stream_http_ndjson(url_or_config, **adapter_kwargs)
+
+
+async def astream_http_ndjson(
+    url_or_config: str | HttpNdjsonConfig,
+    schema: type[BaseModel],
+    **kwargs: Any,
+) -> AsyncIterator[ValidationResult]:
+    """Async convenience wrapper for HTTP NDJSON."""
+    sv_kwargs, adapter_kwargs = _split_kwargs(kwargs)
+    sv = StreamValidator(schema, **sv_kwargs)
+    async for r in sv.astream_http_ndjson(url_or_config, **adapter_kwargs):
+        yield r
+
+
 _VALIDATOR_KWARGS = {
     "on_error",
     "batch_size",
@@ -475,11 +541,14 @@ def _stream_csv_record_batches_sync(
 
 
 __all__ = [
+    "HttpNdjsonConfig",
     "StreamValidator",
     "astream_csv",
+    "astream_http_ndjson",
     "astream_jsonl",
     "astream_parquet",
     "stream_csv",
+    "stream_http_ndjson",
     "stream_jsonl",
     "stream_parquet",
 ]
