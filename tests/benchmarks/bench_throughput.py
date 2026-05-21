@@ -159,7 +159,19 @@ def test_streamval_throughput(tmp_path: Path) -> None:
 
     _print_table(results)
 
-    # Threshold assertions: pull RPS by label.
+    # Threshold assertions are aspirational CI-hardware targets — gate
+    # them behind STREAMVAL_PERF=1 so the default ``STREAMVAL_BENCH=1``
+    # benchmark run is a pure observability pass and never fails the
+    # CI job just for being on slower hardware. Numeric floors stay
+    # overridable via STREAMVAL_MIN_*_RPS so a CI perf job can keep
+    # asserting against the floor it actually expects.
+    if os.environ.get("STREAMVAL_PERF") != "1":
+        print(
+            "\n(STREAMVAL_PERF not set — skipping floor assertions; "
+            "set STREAMVAL_PERF=1 to enforce.)"
+        )
+        return
+
     rps = {label: r for (label, _n, _t, r) in results}
     csv_floor = float(os.environ.get("STREAMVAL_MIN_CSV_BATCH_RPS", "35000"))
     parquet_floor = float(
