@@ -40,7 +40,7 @@ from streamval.core.validator import (
 )
 from streamval.strategies.base import ErrorStrategy
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "ErrorStrategy",
