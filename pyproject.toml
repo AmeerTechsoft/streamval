@@ -49,10 +49,11 @@ docs = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/your-org/streamval"
-Documentation = "https://streamval.readthedocs.io"
-Repository = "https://github.com/your-org/streamval"
-Issues = "https://github.com/your-org/streamval/issues"
+Homepage = "https://github.com/AmeerTechsoft/streamval"
+Documentation = "https://github.com/AmeerTechsoft/streamval#readme"
+Repository = "https://github.com/AmeerTechsoft/streamval"
+Issues = "https://github.com/AmeerTechsoft/streamval/issues"
+Changelog = "https://github.com/AmeerTechsoft/streamval/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["streamval"]

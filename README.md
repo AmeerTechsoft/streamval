@@ -125,7 +125,7 @@ one row dict at a time:
 ## Contributing
 
 ```bash
-git clone https://github.com/your-org/streamval
+git clone https://github.com/AmeerTechsoft/streamval
 cd streamval
 pip install -e ".[dev]"
 pytest
