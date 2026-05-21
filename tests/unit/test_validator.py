@@ -26,4 +26,4 @@ def test_public_surface() -> None:
 
 
 def test_version_set() -> None:
-    assert streamval.__version__ == "0.2.1"
+    assert streamval.__version__ == "0.2.2"
