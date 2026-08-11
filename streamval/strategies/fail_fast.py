@@ -14,10 +14,12 @@ class FailFastHandler(StrategyHandler):
     Valid rows are forwarded unchanged.
     """
 
+    sync_safe = True
+
     def __init__(self) -> None:
         self._raised: bool = False
 
-    async def handle(self, result: ValidationResult) -> ValidationResult | None:
+    def handle_sync(self, result: ValidationResult) -> ValidationResult | None:
         if not result.valid:
             self._raised = True
             raise StreamValidationError(
@@ -25,6 +27,9 @@ class FailFastHandler(StrategyHandler):
                 results=[result],
             )
         return result
+
+    async def handle(self, result: ValidationResult) -> ValidationResult | None:
+        return self.handle_sync(result)
 
     async def finalize(self) -> None:
         return None

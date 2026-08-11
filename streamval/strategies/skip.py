@@ -14,10 +14,12 @@ logger = logging.getLogger("streamval")
 class SkipHandler(StrategyHandler):
     """Yields valid rows only; logs each skipped row at WARNING level."""
 
+    sync_safe = True
+
     def __init__(self) -> None:
         self._skipped: int = 0
 
-    async def handle(self, result: ValidationResult) -> ValidationResult | None:
+    def handle_sync(self, result: ValidationResult) -> ValidationResult | None:
         if not result.valid:
             self._skipped += 1
             logger.warning(
@@ -27,6 +29,9 @@ class SkipHandler(StrategyHandler):
             )
             return None
         return result
+
+    async def handle(self, result: ValidationResult) -> ValidationResult | None:
+        return self.handle_sync(result)
 
     async def finalize(self) -> None:
         return None

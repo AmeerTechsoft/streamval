@@ -77,9 +77,16 @@ s.rows_invalid        # rows that failed
 s.error_rate          # invalid / total
 s.errors_by_field     # {field_name: count}
 s.throughput_rps      # rows per second
-s.peak_memory_mb      # peak Python-object memory
+s.peak_memory_mb      # peak Python-object memory (needs track_memory=True)
 s.duration_seconds    # wall-clock duration
 ```
+
+!!! warning "`peak_memory_mb` is opt-in"
+    Peak memory is measured with `tracemalloc`, which hooks every
+    allocation and costs roughly **4-5× throughput**. It is off by
+    default, so `peak_memory_mb` reads `0.0` unless you construct the
+    validator with `track_memory=True`. Enable it for profiling runs,
+    not in production.
 
 ## 7. Write a custom error strategy
 

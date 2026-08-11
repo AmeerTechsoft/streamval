@@ -63,12 +63,20 @@ class StatsAccumulator:
         4. Call :meth:`stop` after the stream is exhausted.
         5. Call :meth:`to_stats` to obtain the immutable :class:`StreamStats`.
 
-    Memory tracking uses ``tracemalloc``. The accumulator only enables
-    ``tracemalloc`` if it isn't already active, and disables it again on
-    :meth:`stop` to avoid leaking global state.
+    Memory tracking uses ``tracemalloc``, which is **off by default**
+    because it hooks every allocation and costs roughly 4-5x throughput
+    on this workload. Pass ``track_memory=True`` to enable it for a
+    profiling run. If ``tracemalloc`` is already tracing (because the
+    caller or a test started it), peak memory is reported regardless —
+    reading an already-running tracer is free.
+
+    Args:
+        track_memory: Start ``tracemalloc`` for the run so
+            :attr:`StreamStats.peak_memory_mb` is populated. Costs
+            ~4-5x throughput; leave off in production.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, track_memory: bool = False) -> None:
         self._rows_total: int = 0
         self._rows_valid: int = 0
         self._rows_invalid: int = 0
@@ -76,17 +84,21 @@ class StatsAccumulator:
         self._start_time: float | None = None
         self._stop_time: float | None = None
         self._peak_bytes: int = 0
+        self._track_memory: bool = track_memory
         self._owns_tracemalloc: bool = False
 
     def start(self) -> None:
         """Mark the run start and begin tracking peak memory."""
         self._start_time = time.perf_counter()
-        if not tracemalloc.is_tracing():
+        if tracemalloc.is_tracing():
+            # Someone else owns the tracer; piggyback on it for free.
+            self._owns_tracemalloc = False
+            tracemalloc.reset_peak()
+        elif self._track_memory:
             tracemalloc.start()
             self._owns_tracemalloc = True
         else:
             self._owns_tracemalloc = False
-            tracemalloc.reset_peak()
 
     def record(self, result: ValidationResult) -> None:
         """Record a single :class:`ValidationResult`."""
@@ -95,18 +107,38 @@ class StatsAccumulator:
             self._rows_valid += 1
         else:
             self._rows_invalid += 1
+            by_field = self._errors_by_field
             for err in result.errors:
-                self._errors_by_field[err.field] = (
-                    self._errors_by_field.get(err.field, 0) + 1
-                )
+                by_field[err.field] = by_field.get(err.field, 0) + 1
+
+    def record_many(self, results: list[ValidationResult]) -> None:
+        """Record a whole batch of results in one call.
+
+        Equivalent to calling :meth:`record` per result, but pays the
+        method-dispatch and attribute-lookup cost once per batch instead
+        of once per row. The all-valid case (the common one) short-cuts
+        to a pair of integer adds.
+        """
+        n = len(results)
+        self._rows_total += n
+        invalid = [r for r in results if not r.valid]
+        if not invalid:
+            self._rows_valid += n
+            return
+        self._rows_valid += n - len(invalid)
+        self._rows_invalid += len(invalid)
+        by_field = self._errors_by_field
+        for result in invalid:
+            for err in result.errors:
+                by_field[err.field] = by_field.get(err.field, 0) + 1
 
     def stop(self) -> None:
         """Mark the run end and capture peak memory."""
         self._stop_time = time.perf_counter()
-        try:
+        if tracemalloc.is_tracing():
             _current, peak = tracemalloc.get_traced_memory()
             self._peak_bytes = peak
-        except RuntimeError:
+        else:
             self._peak_bytes = 0
         if self._owns_tracemalloc:
             tracemalloc.stop()
