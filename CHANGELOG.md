@@ -29,9 +29,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   base-class default still drives `handle()` as before.
 - `StatsAccumulator.record_many()` records a whole batch in one call,
   short-cutting the all-valid case to two integer adds.
+- **Vectorised CSV coercion — ~1.3-1.4× on CSV batch mode.** CSV columns
+  arrive as strings; the batch path now casts them column-wise in Arrow
+  (`cast_csv_batch`) instead of converting every cell in Python.
+  Each column is cast independently and safely: if any cell fails to
+  parse, that column alone falls back to per-row `_coerce_str`, so a
+  single bad cell degrades one column rather than failing the file.
+  Arrow is strictly stricter than `_coerce_str` — it rejects padded
+  values, `int`-via-`float` strings and non-canonical bool spellings —
+  and never accepts a value while disagreeing about it, so results are
+  unchanged. CSV batch mode went from ~67 000 to ~88 000 rps.
+- `coerce_row` copies the row dict lazily, so rows needing no coercion
+  (every Parquet/Arrow row, and every already-cast CSV row) no longer
+  allocate a copy.
 
 ### Changed
 - `StreamValidator` accepts `track_memory: bool = False`.
+- Raised the `STREAMVAL_PERF=1` regression floors from 35 000 / 45 000
+  to 50 000 / 60 000 rps (CSV / Parquet batch). The old values were
+  calibrated against `tracemalloc`-bound measurements and were too low
+  to catch anything short of a total collapse.
+
+### Fixed
+- Documentation claimed polars gives "~3× faster row-mode throughput"
+  for CSV. On the sync path it measures roughly on par with the stdlib
+  `csv` reader; the claim has been removed.
 
 ### Documentation
 - Corrected the README performance and `batch_size` memory tables, which

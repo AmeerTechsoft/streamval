@@ -63,10 +63,10 @@ a secondary goal. Throughput, 100 000 rows, 4-column schema:
 
 | Mode | rows/sec | Peak memory (1M rows) |
 |---|---|---|
-| streamval Parquet — batch (Arrow path) | ~110 000 | 0.4 MB @ `batch_size=100` |
-| streamval CSV — row mode (polars) | ~105 000 | 0.5 MB @ `batch_size=1000` |
-| streamval CSV — batch (Arrow path) | ~67 000 | 2.4 MB @ `batch_size=1000` |
-| Naive Pydantic loop | ~164 000 | ~1 GB (reads whole file) |
+| streamval Parquet — batch (Arrow path) | ~112 000 | 0.4 MB @ `batch_size=100` |
+| streamval CSV — row mode | ~100 000 | 0.5 MB @ `batch_size=1000` |
+| streamval CSV — batch (Arrow path) | ~88 000 | 2.4 MB @ `batch_size=1000` |
+| Naive Pydantic loop | ~160 000 | ~1 GB (reads whole file) |
 
 > **On the naive loop:** it stays the fastest option for files that fit
 > comfortably in RAM, because `streamval` does strictly more work per
@@ -87,11 +87,19 @@ a secondary goal. Throughput, 100 000 rows, 4-column schema:
   Turn it on only for profiling runs — it is what populates
   `stats.peak_memory_mb`, which reads `0.0` while it is off.
 * Install `streamval[fast]` to unlock the polars path for CSV.
-  Parquet gets the Arrow fast path with no extra dependency.
-* `use_arrow=True` is the default for CSV and Parquet. It is a clear
-  win for Parquet. **For CSV it is currently a loss** — the Arrow path
-  still coerces every cell from string in Python, so `use_arrow=False`
-  measures ~1.5× faster on CSV. Benchmark both on your own data.
+  Parquet gets the Arrow fast path with no extra dependency. On the sync
+  path polars is roughly on par with the stdlib `csv` reader for simple
+  schemas — measure before adding the dependency for CSV alone.
+* `use_arrow=True` is the default for CSV and Parquet, and is a clear
+  win for Parquet. For CSV the two modes now measure within a few
+  percent of each other; row mode holds a small edge on peak memory at
+  the same `batch_size`. Benchmark both on your own data.
+* CSV batch mode casts whole columns in Arrow rather than converting
+  each cell in Python. Columns that parse cleanly take the vectorised
+  path; a column containing even one unparseable cell falls back to
+  per-row coercion, so results are identical either way — only the
+  speed differs. Clean, canonically-formatted CSV is therefore fastest:
+  unpadded numbers, `true`/`false` rather than `yes`/`no`, ISO dates.
 * `batch_size` is the main throughput / memory dial — larger batches
   mean fewer Python ↔ Rust crossings but proportionally higher peak
   memory. Measured peak on 1M rows, Arrow batch mode:
