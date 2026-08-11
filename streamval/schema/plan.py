@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, cast
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from streamval.core.result import ValidationResult
-from streamval.schema.coerce import SourceFormat, coerce_row
+from streamval.schema.coerce import SourceFormat, cast_csv_batch, coerce_row
 
 if TYPE_CHECKING:
     import pyarrow as pa
@@ -146,6 +146,12 @@ class CompiledValidationPlan:
         rather than constructing N dicts in a Python loop, then hands
         the resulting list to :meth:`validate_batch`.
 
+        For CSV the columns arrive as strings, so they are first cast
+        column-wise via :func:`cast_csv_batch`. That moves the bulk of
+        type coercion out of the per-row Python loop and into Arrow,
+        and leaves :func:`coerce_row` with nothing to do for any column
+        that cast cleanly.
+
         Args:
             batch: A :class:`pyarrow.RecordBatch` of rows to validate.
             start_index: Row index of the first row in ``batch``.
@@ -153,6 +159,8 @@ class CompiledValidationPlan:
         Returns:
             A list of :class:`ValidationResult` in batch order.
         """
+        if self._fmt is SourceFormat.CSV:
+            batch = cast_csv_batch(batch, self._model)
         rows: list[dict[str, Any]] = batch.to_pylist()
         return self.validate_batch(rows, start_index=start_index)
 

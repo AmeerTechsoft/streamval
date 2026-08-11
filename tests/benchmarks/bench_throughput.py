@@ -16,8 +16,8 @@ measures rows/sec for:
 
 Thresholds:
 
-* CSV batch mode: > STREAMVAL_MIN_CSV_BATCH_RPS (default 35000)
-* Parquet batch mode: > STREAMVAL_MIN_PARQUET_BATCH_RPS (default 45000)
+* CSV batch mode: > STREAMVAL_MIN_CSV_BATCH_RPS (default 50000)
+* Parquet batch mode: > STREAMVAL_MIN_PARQUET_BATCH_RPS (default 60000)
 
 These are aspirational CI-machine targets; override via env vars on
 slower hardware.
@@ -173,9 +173,9 @@ def test_streamval_throughput(tmp_path: Path) -> None:
         return
 
     rps = {label: r for (label, _n, _t, r) in results}
-    csv_floor = float(os.environ.get("STREAMVAL_MIN_CSV_BATCH_RPS", "35000"))
+    csv_floor = float(os.environ.get("STREAMVAL_MIN_CSV_BATCH_RPS", "50000"))
     parquet_floor = float(
-        os.environ.get("STREAMVAL_MIN_PARQUET_BATCH_RPS", "45000")
+        os.environ.get("STREAMVAL_MIN_PARQUET_BATCH_RPS", "60000")
     )
 
     assert rps["streamval CSV batch (Arrow path)"] > csv_floor, (

@@ -81,6 +81,58 @@ def test_csv_row_vs_batch_mode_produce_identical_results(tmp_path: Path) -> None
         assert a.data.model_dump() == b.data.model_dump()
 
 
+def test_csv_row_vs_batch_mode_agree_on_messy_values(tmp_path: Path) -> None:
+    """Batch mode casts columns in Arrow; row mode coerces per value.
+
+    Arrow declines padded numbers, ``int``-via-``float`` strings and
+    non-canonical bool spellings, so those columns fall back to the
+    per-row path. Both modes must still agree on every row — validity,
+    parsed data, and which fields failed.
+    """
+    p = tmp_path / "messy.csv"
+    rows = [
+        # id,        name,  value,   active
+        ("1", "clean", "1.5", "true"),
+        (" 2 ", "padded-id", "2.5", "false"),  # Arrow rejects " 2 "
+        ("3.0", "int-via-float", "3.5", "true"),  # Arrow rejects "3.0"
+        ("4", "worded-bool", "4.5", "yes"),  # Arrow rejects "yes"
+        ("5", "padded-float", " 5.5 ", "true"),  # Arrow rejects " 5.5 "
+        ("nope", "bad-id", "6.5", "true"),  # invalid in both modes
+        ("7", "empty-value", "", "true"),  # invalid in both modes
+        ("8", "bad-bool", "8.5", "maybe"),  # invalid in both modes
+        ("9" * 22, "huge-id", "9.5", "true"),  # Arrow rejects; python parses
+    ]
+    with p.open("w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["id", "name", "value", "active"])
+        w.writerows(rows)
+
+    row_results = list(
+        StreamValidator(Row, on_error="collect", use_arrow=False).stream_csv(p)
+    )
+    batch_results = list(
+        StreamValidator(Row, on_error="collect", use_arrow=True).stream_csv(p)
+    )
+
+    assert len(row_results) == len(batch_results) == len(rows)
+    for a, b in zip(row_results, batch_results, strict=True):
+        assert a.row_index == b.row_index
+        assert a.valid == b.valid, f"row {a.row_index}: validity differs"
+        if a.valid:
+            assert a.data is not None and b.data is not None
+            assert a.data.model_dump() == b.data.model_dump(), (
+                f"row {a.row_index}: parsed data differs"
+            )
+        else:
+            assert {e.field for e in a.errors} == {e.field for e in b.errors}, (
+                f"row {a.row_index}: failing fields differ"
+            )
+
+    # Sanity: the fixture really does exercise both valid and invalid rows.
+    assert any(r.valid for r in batch_results)
+    assert any(not r.valid for r in batch_results)
+
+
 def test_parquet_row_vs_batch_mode_produce_identical_results(
     tmp_path: Path,
 ) -> None:
@@ -101,11 +153,13 @@ def test_parquet_row_vs_batch_mode_produce_identical_results(
 
 @_PERF
 def test_csv_batch_mode_throughput(tmp_path: Path) -> None:
-    """Arrow batch mode should reach the spec's CI floor (>= 35k rps).
+    """Arrow batch mode should clear the CSV regression floor (>= 50k rps).
 
-    Gated behind ``STREAMVAL_PERF=1`` because the floor is set for the
-    spec's CI hardware, not a developer laptop. Override the numeric
-    floor with ``STREAMVAL_MIN_CSV_BATCH_RPS``.
+    The floor is a regression guard, not a target: it sits at roughly
+    half of what a developer laptop measures, so it trips on a real
+    slowdown without flaking on slower CI hardware. Gated behind
+    ``STREAMVAL_PERF=1``; override the number with
+    ``STREAMVAL_MIN_CSV_BATCH_RPS``.
     """
     p = tmp_path / "big.csv"
     n = 100_000
@@ -116,7 +170,7 @@ def test_csv_batch_mode_throughput(tmp_path: Path) -> None:
     count = sum(1 for _ in v.stream_csv(p))
     elapsed = time.perf_counter() - t0
     rps = count / elapsed
-    floor = float(os.environ.get("STREAMVAL_MIN_CSV_BATCH_RPS", "35000"))
+    floor = float(os.environ.get("STREAMVAL_MIN_CSV_BATCH_RPS", "50000"))
     print(f"\nCSV batch throughput: {rps:,.0f} rps ({elapsed:.2f}s for {count} rows)")
     assert count == n
     assert rps > floor, (
@@ -126,10 +180,11 @@ def test_csv_batch_mode_throughput(tmp_path: Path) -> None:
 
 @_PERF
 def test_parquet_batch_mode_throughput(tmp_path: Path) -> None:
-    """Arrow batch mode for Parquet should reach the spec's floor (>= 45k rps).
+    """Parquet batch mode should clear its regression floor (>= 60k rps).
 
-    Gated behind ``STREAMVAL_PERF=1``; override the numeric floor with
-    ``STREAMVAL_MIN_PARQUET_BATCH_RPS``.
+    A regression guard set at roughly half of laptop-measured
+    throughput. Gated behind ``STREAMVAL_PERF=1``; override the number
+    with ``STREAMVAL_MIN_PARQUET_BATCH_RPS``.
     """
     p = tmp_path / "big.parquet"
     n = 100_000
@@ -140,7 +195,7 @@ def test_parquet_batch_mode_throughput(tmp_path: Path) -> None:
     count = sum(1 for _ in v.stream_parquet(p))
     elapsed = time.perf_counter() - t0
     rps = count / elapsed
-    floor = float(os.environ.get("STREAMVAL_MIN_PARQUET_BATCH_RPS", "45000"))
+    floor = float(os.environ.get("STREAMVAL_MIN_PARQUET_BATCH_RPS", "60000"))
     print(
         f"\nParquet batch throughput: {rps:,.0f} rps "
         f"({elapsed:.2f}s for {count} rows)"
