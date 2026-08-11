@@ -61,11 +61,11 @@ print(v.stats)  # rows_total, rows_valid, throughput_rps, peak_memory_mb, ...
 `streamval` optimises for **bounded memory** with strong throughput as
 a secondary goal. Throughput, 100 000 rows, 4-column schema:
 
-| Mode | rows/sec | Peak memory (1M rows) |
+| Mode | rows/sec | Peak memory, 1M rows |
 |---|---|---|
-| streamval Parquet — batch (Arrow path) | ~112 000 | 0.4 MB @ `batch_size=100` |
+| streamval Parquet — batch (Arrow path) | ~112 000 | bounded by `batch_size` |
 | streamval CSV — row mode | ~100 000 | 0.5 MB @ `batch_size=1000` |
-| streamval CSV — batch (Arrow path) | ~88 000 | 2.4 MB @ `batch_size=1000` |
+| streamval CSV — batch (Arrow path) | ~88 000 | 1.9 MB @ `batch_size=1000` |
 | Naive Pydantic loop | ~160 000 | ~1 GB (reads whole file) |
 
 > **On the naive loop:** it stays the fastest option for files that fit
@@ -104,10 +104,16 @@ a secondary goal. Throughput, 100 000 rows, 4-column schema:
   mean fewer Python ↔ Rust crossings but proportionally higher peak
   memory. Measured peak on 1M rows, Arrow batch mode:
 
-      batch_size=100   → ~0.4 MB peak
-      batch_size=1000  → ~2.4 MB peak  (default)
-      batch_size=5000  → ~11 MB peak
-      batch_size=10000 → ~20 MB peak
+      batch_size=100   → ~1.9 MB peak
+      batch_size=1000  → ~1.9 MB peak  (default)
+      batch_size=5000  → ~9 MB peak
+      batch_size=10000 → ~16 MB peak
+
+  Below `batch_size≈1000` peak memory stops falling — a fixed
+  polars/Arrow scan buffer dominates, so smaller batches cost
+  throughput without buying memory back. `batch_size=1000` (the
+  default) is the sweet spot; go smaller only if you have measured a
+  reason to.
 
 * `workers > 1` enables a thread pool. Pydantic's Rust core is
   thread-safe; per-row ordering is preserved.
