@@ -71,9 +71,18 @@ print(stats.rows_invalid)      # 1_568
 print(stats.error_rate)        # 0.001568
 print(stats.errors_by_field)   # {"amount": 890, "order_id": 678, ...}
 print(stats.throughput_rps)    # 14203.5
-print(stats.peak_memory_mb)    # 0.47
+print(stats.peak_memory_mb)    # 0.0 unless track_memory=True
 print(stats.duration_seconds)  # 70.4
 print(stats)                   # one-line summary string
+```
+
+`peak_memory_mb` is populated only when the validator was built with
+`track_memory=True`. It relies on `tracemalloc`, which hooks every
+allocation and costs roughly 4-5× throughput, so it stays off by
+default:
+
+```python
+v = StreamValidator(Order, track_memory=True)   # profiling runs only
 ```
 
 `errors_by_field` counts how many times each field name appeared in an

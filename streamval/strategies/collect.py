@@ -20,14 +20,19 @@ class CollectHandler(StrategyHandler):
             means unlimited; the caller is expected to inspect stats.
     """
 
+    sync_safe = True
+
     def __init__(self, max_errors: int | None = None) -> None:
         self._max_errors = max_errors
         self._invalid: list[ValidationResult] = []
 
-    async def handle(self, result: ValidationResult) -> ValidationResult | None:
+    def handle_sync(self, result: ValidationResult) -> ValidationResult | None:
         if not result.valid:
             self._invalid.append(result)
         return result
+
+    async def handle(self, result: ValidationResult) -> ValidationResult | None:
+        return self.handle_sync(result)
 
     async def finalize(self) -> None:
         if self._max_errors is not None and len(self._invalid) > self._max_errors:

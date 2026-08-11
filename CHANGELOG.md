@@ -5,6 +5,39 @@ All notable changes to streamval will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Performance
+- **`tracemalloc` is no longer enabled by default — ~4.7× throughput.**
+  `StatsAccumulator.start()` unconditionally started `tracemalloc` on
+  every run, and it hooks every allocation. Parquet batch mode went from
+  ~22 000 rps to ~118 000 rps; CSV batch from ~14 000 to ~71 000 rps on
+  the same machine. Memory tracking is now opt-in via the new
+  `track_memory=True` parameter on `StreamValidator`; when it is off,
+  `stats.peak_memory_mb` reports `0.0`. If `tracemalloc` is already
+  tracing (a test or profiler started it), peak memory is still reported
+  at no extra cost.
+- **`ValidationResult` is now a slotted dataclass** and `success()`
+  bypasses the generated `__init__`, making the per-row hot-path
+  allocation ~1.6× cheaper and slightly reducing peak memory. The class
+  stays `frozen`; immutability and equality are unchanged.
+- **No coroutine allocation per row.** `StrategyHandler` gained a
+  `handle_sync()` entry point and a `sync_safe` class flag. All three
+  built-in strategies implement it synchronously, so the hot loop no
+  longer allocates a coroutine and raises `StopIteration` for every row
+  on either the sync or async path. Custom handlers are unaffected — the
+  base-class default still drives `handle()` as before.
+- `StatsAccumulator.record_many()` records a whole batch in one call,
+  short-cutting the all-valid case to two integer adds.
+
+### Changed
+- `StreamValidator` accepts `track_memory: bool = False`.
+
+### Documentation
+- Corrected the README performance and `batch_size` memory tables, which
+  reported figures measured with `tracemalloc` active and understated
+  peak memory at large batch sizes by ~6×.
+
 ## [0.2.2] - 2026-05-21
 
 ### Added

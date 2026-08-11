@@ -50,6 +50,11 @@ class StreamValidator:
         max_errors: Cap on collected errors for the ``collect`` strategy.
             ``None`` means unlimited.
         workers: Thread-pool size; ``1`` (default) disables the pool.
+        use_arrow: Use the Arrow batch fast path for CSV / Parquet.
+        track_memory: Enable ``tracemalloc`` so
+            :attr:`StreamStats.peak_memory_mb` is populated. **Off by
+            default** — it hooks every allocation and costs ~4-5x
+            throughput. Turn it on for profiling runs, not production.
 
     Example:
         >>> from pydantic import BaseModel
@@ -70,6 +75,7 @@ class StreamValidator:
         max_errors: int | None = None,
         workers: int = 1,
         use_arrow: bool = True,
+        track_memory: bool = False,
     ) -> None:
         self._schema = schema
         self._on_error = on_error
@@ -80,7 +86,7 @@ class StreamValidator:
         self._handler: StrategyHandler = build_handler(
             on_error, max_errors=max_errors
         )
-        self._stats = StatsAccumulator()
+        self._stats = StatsAccumulator(track_memory=track_memory)
 
     @property
     def use_arrow(self) -> bool:
@@ -105,15 +111,23 @@ class StreamValidator:
         plan = get_plan(self._schema, fmt)
         buf = BatchBuffer(source, batch_size=self._batch_size)
         proc = ParallelBatchProcessor(buf, plan, workers=self._workers)
+        handler = self._handler
+        sync_safe = handler.sync_safe
+        record = self._stats.record
 
         self._stats.start()
         try:
             async for result in proc.stream():
-                self._stats.record(result)
-                handled = await self._handler.handle(result)
+                record(result)
+                # Built-in handlers never await; calling the sync entry
+                # point directly skips a coroutine allocation per row.
+                if sync_safe:
+                    handled = handler.handle_sync(result)
+                else:
+                    handled = await handler.handle(result)
                 if handled is not None:
                     yield handled
-            await self._handler.finalize()
+            await handler.finalize()
         finally:
             self._stats.stop()
 
@@ -160,10 +174,12 @@ class StreamValidator:
         start: int,
         handler: StrategyHandler,
     ) -> Iterator[ValidationResult]:
+        record = self._stats.record
+        handle = handler.handle_sync
         for offset, row in enumerate(batch):
             result = plan.validate_row(start + offset, row)
-            self._stats.record(result)
-            handled = _run_coro(handler.handle(result))
+            record(result)
+            handled = handle(result)
             if handled is not None:
                 yield handled
 
@@ -175,15 +191,21 @@ class StreamValidator:
         """Arrow fast path: validate :class:`pyarrow.RecordBatch` directly."""
         plan = get_plan(self._schema, fmt)
         pipeline = RecordBatchPipeline(source, plan, workers=self._workers)
+        handler = self._handler
+        sync_safe = handler.sync_safe
+        record = self._stats.record
 
         self._stats.start()
         try:
             async for result in pipeline.stream():
-                self._stats.record(result)
-                handled = await self._handler.handle(result)
+                record(result)
+                if sync_safe:
+                    handled = handler.handle_sync(result)
+                else:
+                    handled = await handler.handle(result)
                 if handled is not None:
                     yield handled
-            await self._handler.finalize()
+            await handler.finalize()
         finally:
             self._stats.stop()
 
@@ -195,15 +217,17 @@ class StreamValidator:
         """Sync mirror of :meth:`_stream_arrow`."""
         plan = get_plan(self._schema, fmt)
         handler = self._handler
+        handle = handler.handle_sync
+        record_many = self._stats.record_many
         self._stats.start()
         idx = 0
         try:
             for batch in batches:
                 results = plan.validate_record_batch(batch, start_index=idx)
                 idx += batch.num_rows
+                record_many(results)
                 for result in results:
-                    self._stats.record(result)
-                    handled = _run_coro(handler.handle(result))
+                    handled = handle(result)
                     if handled is not None:
                         yield handled
             _run_coro(handler.finalize())
@@ -494,6 +518,7 @@ _VALIDATOR_KWARGS = {
     "max_errors",
     "workers",
     "use_arrow",
+    "track_memory",
 }
 
 
