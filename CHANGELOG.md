@@ -39,6 +39,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   values, `int`-via-`float` strings and non-canonical bool spellings —
   and never accepts a value while disagreeing about it, so results are
   unchanged. CSV batch mode went from ~67 000 to ~88 000 rps.
+- **The CSV cast plan is resolved once per file, not once per batch.**
+  `cast_csv_batch` previously rebuilt a `pyarrow.Schema` (and a `Field`
+  per column) on every batch, so its allocation cost scaled with *batch
+  count*: a 1M-row file at `batch_size=100` is 10 000 batches and so
+  10 000 throwaway schema objects, against 1 000 at `batch_size=1000`.
+  Column indices and the output schema are now cached per (model, input
+  schema) and reused whenever every column casts cleanly.
 - `coerce_row` copies the row dict lazily, so rows needing no coercion
   (every Parquet/Arrow row, and every already-cast CSV row) no longer
   allocate a copy.

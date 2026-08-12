@@ -26,12 +26,16 @@ from __future__ import annotations
 import csv
 import gc
 import os
+import platform
 import tracemalloc
 from pathlib import Path
 
+import pyarrow as pa
+import pydantic
 import pytest
 from pydantic import BaseModel
 
+from streamval._compat import polars
 from streamval.core.validator import StreamValidator
 
 ROWS = 500_000
@@ -135,6 +139,21 @@ def test_streamval_memory(tmp_path: Path) -> None:
     n_row, row_lo, row_hi = _measure_peak(p, batch_size=1_000, use_arrow=False)
     samples.append(("row mode batch_size=1000", 1_000, n_row, row_lo, row_hi))
 
+    # Peak memory has differed between Windows and Linux CI at small
+    # batch sizes in ways the numbers alone don't explain, so record the
+    # environment alongside them.
+    print()
+    print(
+        f"env: {platform.system()} {platform.machine()} | "
+        f"python {platform.python_version()} | "
+        f"pyarrow {pa.__version__} | pydantic {pydantic.__version__} | "
+        f"polars {getattr(polars, '__version__', 'not installed')} | "
+        f"cpus {os.cpu_count()}"
+    )
+    print(
+        f"pyarrow pool: backend={pa.default_memory_pool().backend_name} "
+        f"allocated={pa.total_allocated_bytes() / (1024 * 1024):.2f} MB"
+    )
     print()
     print(
         f"{'mode':<28} {'batch_size':>11} {'rows':>9} "
