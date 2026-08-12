@@ -221,6 +221,47 @@ def test_variant_representations_stay_on_the_fast_path(
     assert [r[column] for r in out.to_pylist()] == expected
 
 
+def test_strategy_hint_survives_a_file_changing_shape_midstream() -> None:
+    """The cached per-column strategy is an optimisation, never a commitment.
+
+    A file whose formatting changes between batches must still validate
+    correctly, whichever strategy the previous batch happened to need.
+    """
+    canonical = {
+        "id": ["1", "2"],
+        "name": ["a", "b"],
+        "value": ["1.0", "2.0"],
+        "active": ["true", "false"],
+    }
+    padded = {
+        "id": [" 3 ", " 4 "],
+        "name": ["c", "d"],
+        "value": [" 3.0 ", " 4.0 "],
+        "active": [" yes ", " no "],
+    }
+    worded = {
+        "id": ["5.0", "6.0"],
+        "name": ["e", "f"],
+        "value": ["5.0", "6.0"],
+        "active": ["y", "n"],
+    }
+    expected = {
+        id(canonical): [1, 2, 1.0, 2.0, True, False],
+        id(padded): [3, 4, 3.0, 4.0, True, False],
+        id(worded): [5, 6, 5.0, 6.0, True, False],
+    }
+
+    # Alternate repeatedly so every hint gets exercised against every shape.
+    for cols in [canonical, padded, worded, canonical, worded, padded, canonical]:
+        out = cast_csv_batch(_batch(**cols), Row).to_pylist()
+        ids = [r["id"] for r in out]
+        values = [r["value"] for r in out]
+        actives = [r["active"] for r in out]
+        assert ids + values + actives == expected[id(cols)], (
+            f"wrong result for {cols['id']}"
+        )
+
+
 def test_bool_nulls_survive_the_vocabulary_path() -> None:
     batch = _batch(
         id=["1", "2"], name=["a", "b"], value=["1.0", "2.0"], active=["yes", None]

@@ -16,19 +16,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`"42.0"`). All three are now handled column-wise, against the same
   `_TRUTHY`/`_FALSY` sets the per-row path uses.
 
-      file formatting        before    after
-      canonical              81 538   83 824
-      padded cells           45 334   87 516   1.93x
-      worded bools           68 520   85 924   1.25x
-      int-as-float           55 180   73 042   1.32x
-      all three combined     41 725   69 998   1.68x
+  Throughput relative to a canonically-formatted file of the same size
+  (a ratio, so it is not distorted by machine-to-machine drift):
 
-  Variant files now run at 84-104% of canonical throughput, against
-  51-84% before. The safety rule is unchanged — a column is only cast
-  when the result provably matches per-row coercion, otherwise it
-  declines. `"42.7"` deliberately declines rather than truncating,
-  because the per-row path yields `42` and a decline is always safe
-  where a disagreement would not be.
+      file formatting        before    after
+      canonical               1.00x    1.00x
+      padded cells            0.56x    1.01x
+      worded bools            0.84x    1.06x
+      int-as-float            0.68x    1.02x
+      all three combined      0.51x    0.97x
+
+  Formatting variance now costs essentially nothing, where it used to
+  cost up to half of throughput.
+
+  Which strategy a column needs is discovered on the first batch and
+  cached on the plan, because neither fixed order suits both cases:
+  trimming every column unconditionally costs a canonical file ~7%,
+  while attempting the plain cast first wastes a pass over every batch
+  of a padded one. The hint is only ever an optimisation — if it fails
+  the remaining strategies are still tried, so a file that changes shape
+  mid-stream stays correct.
+
+  The safety rule is unchanged: a column is cast only when the result
+  provably matches per-row coercion, otherwise it declines. `"42.7"`
+  deliberately declines rather than truncating, because the per-row path
+  yields `42` and a decline is always safe where a disagreement is not.
 - **A failed batch no longer re-validates every row — up to 1.7× on
   files with invalid rows.** `validate_batch` tried the bulk validator
   and, on any failure, fell back to validating the whole batch one row
