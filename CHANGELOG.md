@@ -51,15 +51,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to catch anything short of a total collapse.
 
 ### Fixed
-- **The memory benchmark reported noise at small batch sizes.**
-  `tracemalloc` records a high-water mark, so the figure included
-  whatever transient garbage was uncollected when the mark was set. At
-  `batch_size=100` the live set is small enough that this dominated:
-  five identical runs measured 0.24, 0.25, 0.25, 0.25 and 1.85 MB (a
-  7.6× spread), and a 1M-row run was seen as high as 8.21 MB.
+- **The memory benchmark reported an unstable number at small batch
+  sizes.** `tracemalloc` records a high-water mark, so the figure
+  includes transient garbage as well as the live working set. Once the
+  live set drops below ~1 MB that garbage dominates and the result
+  stops being reproducible: at `batch_size=100` the same code has
+  measured 0.24, 0.25, 1.85, 1.90 and 8.23 MB across runs and machines,
+  while `batch_size>=1000` reproduces to within 0.01 MB everywhere.
   `bench_memory.py` now collects garbage periodically during each
-  measurement, which removes the artifact without weakening leak
-  detection — `gc.collect()` only frees unreachable objects.
+  measurement, runs each configuration `REPS` times, and reports both
+  the floor and the worst case so an unstable measurement is visible
+  instead of being reduced to one flattering number. Neither change
+  weakens leak detection — `gc.collect()` only frees unreachable
+  objects. The row count dropped to 500 000 to keep the repeated runs
+  affordable; peak memory at the default batch size is flat with respect
+  to file size (1.89 MB at 500k rows, 1.91 MB at 1M), which is the
+  property the benchmark exists to demonstrate.
 - Documentation claimed polars gives "~3× faster row-mode throughput"
   for CSV. On the sync path it measures roughly on par with the stdlib
   `csv` reader; the claim has been removed.

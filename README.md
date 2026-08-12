@@ -104,16 +104,19 @@ a secondary goal. Throughput, 100 000 rows, 4-column schema:
   mean fewer Python ↔ Rust crossings but proportionally higher peak
   memory. Measured peak on 1M rows, Arrow batch mode:
 
-      batch_size=100   → ~1.9 MB peak
+      batch_size=100   → ~0.3 MB live, but see below
       batch_size=1000  → ~1.9 MB peak  (default)
       batch_size=5000  → ~9 MB peak
       batch_size=10000 → ~16 MB peak
 
-  Below `batch_size≈1000` peak memory stops falling — a fixed
-  polars/Arrow scan buffer dominates, so smaller batches cost
-  throughput without buying memory back. `batch_size=1000` (the
-  default) is the sweet spot; go smaller only if you have measured a
-  reason to.
+  From `batch_size=1000` upward these reproduce to within 0.01 MB across
+  machines. **Below that they do not.** Once the live working set drops
+  under ~1 MB, the peak is dominated by however much short-lived garbage
+  happens to be uncollected when the high-water mark is taken, which
+  depends on GC timing rather than on `batch_size`: at
+  `batch_size=100` the same code has measured anywhere from 0.26 MB to
+  8.2 MB across machines and runs. Prefer `batch_size=1000` unless you
+  have measured a smaller value on *your* hardware and workload.
 
 * `workers > 1` enables a thread pool. Pydantic's Rust core is
   thread-safe; per-row ordering is preserved.
