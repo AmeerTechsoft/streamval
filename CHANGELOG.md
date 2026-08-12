@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Performance
+- **Variant CSV formatting stays on the vectorised path — up to 1.9×.**
+  A plain Arrow cast is stricter than the per-row `_coerce_str` in three
+  ways that real exports hit constantly, and each one used to drop a
+  whole column onto the Python path: padded cells (`" 42 "`), worded
+  booleans (`yes`/`no`/`y`/`n`/`t`/`f`), and integers written as floats
+  (`"42.0"`). All three are now handled column-wise, against the same
+  `_TRUTHY`/`_FALSY` sets the per-row path uses.
+
+      file formatting        before    after
+      canonical              81 538   83 824
+      padded cells           45 334   87 516   1.93x
+      worded bools           68 520   85 924   1.25x
+      int-as-float           55 180   73 042   1.32x
+      all three combined     41 725   69 998   1.68x
+
+  Variant files now run at 84-104% of canonical throughput, against
+  51-84% before. The safety rule is unchanged — a column is only cast
+  when the result provably matches per-row coercion, otherwise it
+  declines. `"42.7"` deliberately declines rather than truncating,
+  because the per-row path yields `42` and a decline is always safe
+  where a disagreement would not be.
 - **A failed batch no longer re-validates every row — up to 1.7× on
   files with invalid rows.** `validate_batch` tried the bulk validator
   and, on any failure, fell back to validating the whole batch one row
