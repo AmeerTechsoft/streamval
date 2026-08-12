@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Performance
+- **A failed batch no longer re-validates every row — up to 1.7× on
+  files with invalid rows.** `validate_batch` tried the bulk validator
+  and, on any failure, fell back to validating the whole batch one row
+  at a time. Throughput therefore depended on whether a batch contained
+  *any* bad row rather than on how many: at `batch_size=10000`, 20 bad
+  rows in 200 000 (0.01%) was enough to put every batch on the slow path
+  and roughly halve throughput. The failing rows are now identified from
+  the `ValidationError` — a list adapter reports the element index in
+  `loc` — so only those rows are validated individually while the rest
+  go back through the bulk validator in one call.
+
+      bad rows / 200k       before    after
+      2      (0.001%)        0.73x    0.93x
+      20     (0.01%)         0.51x    0.76x
+      200    (0.1%)          0.40x    0.67x
+      2 000  (1%)            0.41x    0.67x
+      20 000 (10%)           0.44x    0.58x
+
+  This is an optimisation only: the result is always identical to
+  validating row by row, and any batch whose failing rows cannot be
+  localised with confidence falls back to exactly that. A differential
+  test suite (104 cases, randomised dirty data across type failures,
+  constraint failures, optional fields and every density of bad rows
+  from 0% to 100%) checks the two against each other.
 - **`tracemalloc` is no longer enabled by default — ~4.7× throughput.**
   `StatsAccumulator.start()` unconditionally started `tracemalloc` on
   every run, and it hooks every allocation. Parquet batch mode went from
