@@ -5,7 +5,31 @@ All notable changes to streamval will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] - 2026-08-12
+
+A performance release. Same API, same validation results, 4-7× the
+throughput — plus the removal of a default that was quietly costing
+every user most of their speed.
+
+### Upgrading
+
+One behaviour change to be aware of:
+
+- **`stats.peak_memory_mb` now reads `0.0` by default.** It is populated
+  by `tracemalloc`, which hooks every allocation and costs roughly 4-5×
+  throughput, so it is now opt-in. If you read this field, construct the
+  validator with `track_memory=True`:
+
+      v = StreamValidator(Order, track_memory=True)   # profiling only
+
+  Leave it off in production. Every other field on `StreamStats` is
+  unaffected.
+
+Nothing else changes: `ValidationResult` is still frozen, error
+strategies behave identically, and validation results are unchanged for
+every input. The batch-splitting and column-casting work below are
+optimisations only — each is covered by tests asserting the fast path
+produces exactly what per-row validation produces.
 
 ### Performance
 - **Variant CSV formatting stays on the vectorised path — up to 1.9×.**
@@ -92,10 +116,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Each column is cast independently and safely: if any cell fails to
   parse, that column alone falls back to per-row `_coerce_str`, so a
   single bad cell degrades one column rather than failing the file.
-  Arrow is strictly stricter than `_coerce_str` — it rejects padded
-  values, `int`-via-`float` strings and non-canonical bool spellings —
-  and never accepts a value while disagreeing about it, so results are
-  unchanged. CSV batch mode went from ~67 000 to ~88 000 rps.
+  Arrow never accepts a value while disagreeing with `_coerce_str` about
+  it — it either matches or declines — so results are unchanged. CSV
+  batch mode went from ~67 000 to ~88 000 rps. (Which formatting the
+  vectorised path accepts is covered by the entry above.)
 - **The CSV cast plan is resolved once per file, not once per batch.**
   `cast_csv_batch` previously rebuilt a `pyarrow.Schema` (and a `Field`
   per column) on every batch, so its allocation cost scaled with *batch
