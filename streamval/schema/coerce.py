@@ -24,6 +24,7 @@ from enum import StrEnum
 from typing import Any, get_args, get_origin
 
 import pyarrow as pa
+import pyarrow.compute as pc
 from pydantic import BaseModel
 
 
@@ -162,6 +163,105 @@ def _arrow_cast_map(model: type[BaseModel]) -> tuple[tuple[str, pa.DataType], ..
     return out
 
 
+_TRUTHY_ARROW = pa.array(sorted(_TRUTHY), type=pa.string())
+_FALSY_ARROW = pa.array(sorted(_FALSY), type=pa.string())
+
+
+# How a column had to be handled last time. Ordered by increasing
+# generality, so a hint lets later batches skip attempts that already
+# failed once for this column.
+_DIRECT = 1
+_TRIM = 2
+_WIDEN = 3
+
+
+def _cast_string_column(
+    col: pa.Array,
+    arrow_type: pa.DataType,
+    hint: int = _DIRECT,
+) -> tuple[pa.Array | None, int]:
+    """Column-wise equivalent of :func:`_coerce_str`, or ``None`` to decline.
+
+    A plain ``cast`` is stricter than :func:`_coerce_str` in three ways
+    that show up constantly in real files, and each one used to drop the
+    whole column onto the per-row Python path:
+
+    * **Padding** — ``" 42 "``. ``_coerce_str`` strips first, so we trim
+      the column first too. ``pc.utf8_trim_whitespace`` matches Python's
+      ``str.strip()`` on ASCII whitespace, ``\\x0b\\x0c`` and NBSP.
+    * **Bool vocabulary** — ``yes``/``y``/``t``/``no``/``n``/``f``.
+      Resolved against the same :data:`_TRUTHY` / :data:`_FALSY` sets the
+      per-row path uses, after ``utf8_lower``.
+    * **Integers written as floats** — ``"42.0"`` from spreadsheet
+      exports. ``_coerce_str`` falls back to ``int(float(s))``.
+
+    The safety rule is unchanged: this only ever returns a column it can
+    prove matches the per-row result. Anything else declines, and the
+    caller leaves the column as strings for :func:`coerce_row` to handle.
+    Notably ``"42.7"`` declines rather than truncating — the per-row path
+    yields ``42``, and a decline is always safe where a disagreement
+    would not be.
+
+    Ordering matters for throughput, and neither fixed order is right for
+    both kinds of file: trimming unconditionally costs a canonical file
+    ~7%, while trying the plain cast first costs a padded file a wasted
+    pass over every batch. So the strategy that worked is returned as a
+    ``hint`` and cached on the plan — the first batch discovers how a
+    column is formatted and the rest go straight to it.
+
+    A column that casts without trimming had no surrounding whitespace,
+    so the strip :func:`_coerce_str` performs is a no-op there and the
+    two agree. The hint is only ever an optimisation: if it fails, the
+    remaining strategies are still tried, so a file that changes shape
+    mid-stream stays correct.
+
+    Returns:
+        ``(column, strategy)`` on success, or ``(None, hint)`` to decline.
+    """
+    if hint <= _DIRECT:
+        try:
+            return col.cast(arrow_type, safe=True), _DIRECT
+        except (pa.ArrowInvalid, pa.ArrowNotImplementedError):
+            pass
+
+    try:
+        trimmed = pc.utf8_trim_whitespace(col)
+    except (pa.ArrowInvalid, pa.ArrowNotImplementedError):
+        return None, hint
+
+    if hint <= _TRIM:
+        try:
+            return trimmed.cast(arrow_type, safe=True), _TRIM
+        except (pa.ArrowInvalid, pa.ArrowNotImplementedError):
+            pass
+
+    if pa.types.is_boolean(arrow_type):
+        low = pc.utf8_lower(trimmed)
+        is_true = pc.is_in(low, value_set=_TRUTHY_ARROW)
+        recognised = pc.or_(
+            pc.or_(is_true, pc.is_in(low, value_set=_FALSY_ARROW)),
+            pc.is_null(trimmed),
+        )
+        # ``pc.all`` is null for an empty column, hence the identity test.
+        if pc.all(recognised).as_py() is not True:
+            return None, hint
+        return (
+            pc.if_else(pc.is_null(trimmed), pa.scalar(None, pa.bool_()), is_true),
+            _WIDEN,
+        )
+
+    if pa.types.is_integer(arrow_type):
+        try:
+            widened = trimmed.cast(pa.float64(), safe=True).cast(
+                arrow_type, safe=True
+            )
+        except (pa.ArrowInvalid, pa.ArrowNotImplementedError):
+            return None, hint
+        return widened, _WIDEN
+
+    return None, hint
+
+
 class _CastPlan:
     """Which columns to cast, resolved once per (model, input schema).
 
@@ -172,7 +272,7 @@ class _CastPlan:
     entirely for the common all-columns-cast case.
     """
 
-    __slots__ = ("in_schema", "entries", "out_schema")
+    __slots__ = ("in_schema", "entries", "out_schema", "hints")
 
     def __init__(
         self,
@@ -183,6 +283,8 @@ class _CastPlan:
         self.in_schema = in_schema
         self.entries = entries
         self.out_schema = out_schema
+        # How each entry was handled last batch; see _cast_string_column.
+        self.hints: list[int] = [_DIRECT] * len(entries)
 
 
 _CAST_PLANS: weakref.WeakKeyDictionary[type[BaseModel], _CastPlan] = (
@@ -254,10 +356,12 @@ def cast_csv_batch(
 
     columns: list[pa.Array] | None = None
     all_cast = True
-    for idx, arrow_type in plan.entries:
-        try:
-            cast_col = batch.column(idx).cast(arrow_type, safe=True)
-        except (pa.ArrowInvalid, pa.ArrowNotImplementedError):
+    hints = plan.hints
+    for pos, (idx, arrow_type) in enumerate(plan.entries):
+        cast_col, hints[pos] = _cast_string_column(
+            batch.column(idx), arrow_type, hints[pos]
+        )
+        if cast_col is None:
             # At least one cell doesn't parse — leave the column as
             # strings and let the per-row path report it.
             all_cast = False

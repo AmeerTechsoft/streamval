@@ -98,8 +98,11 @@ a secondary goal. Throughput, 100 000 rows, 4-column schema:
   each cell in Python. Columns that parse cleanly take the vectorised
   path; a column containing even one unparseable cell falls back to
   per-row coercion, so results are identical either way — only the
-  speed differs. Clean, canonically-formatted CSV is therefore fastest:
-  unpadded numbers, `true`/`false` rather than `yes`/`no`, ISO dates.
+  speed differs. Common formatting variants are handled column-wise and
+  stay fast: padded cells (`" 42 "`), worded booleans (`yes`/`no`/`y`/
+  `n`/`t`/`f`), and integers written as floats (`"42.0"`). ISO dates are
+  required for the fast path; other date formats still validate, just
+  per row.
 * `batch_size` is the main throughput / memory dial — larger batches
   mean fewer Python ↔ Rust crossings but proportionally higher peak
   memory. Measured peak on 1M rows, Arrow batch mode:

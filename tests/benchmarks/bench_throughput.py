@@ -57,6 +57,24 @@ def _write_csv(path: Path, n: int) -> None:
             w.writerow([i, f"n{i}", f"{i * 0.5:.3f}", "true"])
 
 
+def _write_variant_csv(path: Path, n: int) -> None:
+    """Same rows as :func:`_write_csv`, written the way real exports write them.
+
+    Every row is still valid — only the formatting varies: padded cells,
+    worded booleans, and integers carrying a trailing ``.0``. A plain
+    Arrow cast rejects all three, so this is the file that exercises the
+    vectorised normalisation in ``_cast_string_column``. The canonical
+    benchmark above never touches that code.
+    """
+    with path.open("w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["id", "name", "value", "active"])
+        for i in range(n):
+            w.writerow(
+                [f" {i}.0 ", f"n{i}", f" {i * 0.5:.3f} ", " yes " if i % 2 else " no "]
+            )
+
+
 def _write_parquet(path: Path, n: int) -> None:
     table = pa.table(
         {
@@ -90,8 +108,10 @@ def _print_table(rows: list[tuple[str, int, float, float]]) -> None:
 )
 def test_streamval_throughput(tmp_path: Path) -> None:
     csv_path = tmp_path / "bench.csv"
+    variant_path = tmp_path / "bench_variant.csv"
     parquet_path = tmp_path / "bench.parquet"
     _write_csv(csv_path, ROWS)
+    _write_variant_csv(variant_path, ROWS)
     _write_parquet(parquet_path, ROWS)
 
     results: list[tuple[str, int, float, float]] = []
@@ -103,6 +123,16 @@ def test_streamval_throughput(tmp_path: Path) -> None:
         return sum(1 for _ in v.stream_csv(csv_path))
 
     results.append(_bench("streamval CSV batch (Arrow path)", _csv_batch))
+
+    def _csv_batch_variant() -> int:
+        v = StreamValidator(
+            Row, on_error="skip", use_arrow=True, batch_size=10_000
+        )
+        return sum(1 for _ in v.stream_csv(variant_path))
+
+    results.append(
+        _bench("streamval CSV batch (variant formatting)", _csv_batch_variant)
+    )
 
     def _parquet_batch() -> int:
         v = StreamValidator(
@@ -159,6 +189,24 @@ def test_streamval_throughput(tmp_path: Path) -> None:
 
     _print_table(results)
 
+    rps = {label: r for (label, _n, _t, r) in results}
+
+    # Ratio guard for the vectorised normalisation. Unlike the absolute
+    # floors below this is machine-independent: both files hold the same
+    # rows and are measured back to back in one process, so it is not
+    # distorted by runner speed. Before the normalisation landed, variant
+    # formatting ran at ~0.51x of canonical; it now measures ~0.97x, so a
+    # 0.7 threshold catches a regression with room to spare.
+    canonical = rps["streamval CSV batch (Arrow path)"]
+    variant = rps["streamval CSV batch (variant formatting)"]
+    ratio = variant / canonical
+    print(f"\nvariant / canonical formatting: {ratio:.2f}x")
+    assert ratio > 0.7, (
+        f"variant-formatted CSV at {ratio:.2f}x of canonical "
+        f"({variant:,.0f} vs {canonical:,.0f} rps) — padded cells, worded "
+        "bools or int-as-float have stopped taking the vectorised path"
+    )
+
     # Threshold assertions are aspirational CI-hardware targets — gate
     # them behind STREAMVAL_PERF=1 so the default ``STREAMVAL_BENCH=1``
     # benchmark run is a pure observability pass and never fails the
@@ -172,7 +220,6 @@ def test_streamval_throughput(tmp_path: Path) -> None:
         )
         return
 
-    rps = {label: r for (label, _n, _t, r) in results}
     csv_floor = float(os.environ.get("STREAMVAL_MIN_CSV_BATCH_RPS", "50000"))
     parquet_floor = float(
         os.environ.get("STREAMVAL_MIN_PARQUET_BATCH_RPS", "60000")
