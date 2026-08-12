@@ -11,7 +11,7 @@ site_description: >-
   Streaming, Pydantic-backed validation for CSV, JSONL, Parquet, Arrow,
   HTTP NDJSON, and LLM SSE streams — bounded memory, row-by-row.
 site_author: Ameer Techsoft
-site_url: https://streamval.readthedocs.io/
+site_url: https://ameertechsoft.github.io/streamval/
 
 repo_name: AmeerTechsoft/streamval
 repo_url: https://github.com/AmeerTechsoft/streamval
