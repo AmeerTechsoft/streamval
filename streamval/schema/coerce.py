@@ -162,6 +162,56 @@ def _arrow_cast_map(model: type[BaseModel]) -> tuple[tuple[str, pa.DataType], ..
     return out
 
 
+class _CastPlan:
+    """Which columns to cast, resolved once per (model, input schema).
+
+    Rebuilding this per batch is what made the cast's cost scale with
+    *batch count* rather than row count: at ``batch_size=100`` a 1M-row
+    file is 10 000 batches, so 10 000 throwaway ``Schema`` and ``Field``
+    objects. Resolving it once and reusing ``out_schema`` removes that
+    entirely for the common all-columns-cast case.
+    """
+
+    __slots__ = ("in_schema", "entries", "out_schema")
+
+    def __init__(
+        self,
+        in_schema: pa.Schema,
+        entries: tuple[tuple[int, pa.DataType], ...],
+        out_schema: pa.Schema,
+    ) -> None:
+        self.in_schema = in_schema
+        self.entries = entries
+        self.out_schema = out_schema
+
+
+_CAST_PLANS: weakref.WeakKeyDictionary[type[BaseModel], _CastPlan] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _build_cast_plan(in_schema: pa.Schema, model: type[BaseModel]) -> _CastPlan:
+    names = in_schema.names
+    entries: list[tuple[int, pa.DataType]] = []
+    for name, arrow_type in _arrow_cast_map(model):
+        try:
+            idx = names.index(name)
+        except ValueError:
+            continue
+        col_type = in_schema.field(idx).type
+        if not (pa.types.is_string(col_type) or pa.types.is_large_string(col_type)):
+            continue
+        entries.append((idx, arrow_type))
+
+    if not entries:
+        return _CastPlan(in_schema, (), in_schema)
+
+    fields = list(in_schema)
+    for idx, arrow_type in entries:
+        fields[idx] = fields[idx].with_type(arrow_type)
+    return _CastPlan(in_schema, tuple(entries), pa.schema(fields))
+
+
 def cast_csv_batch(
     batch: pa.RecordBatch,
     model: type[BaseModel],
@@ -195,25 +245,22 @@ def cast_csv_batch(
         A ``RecordBatch`` with castable columns converted. Returns the
         input unchanged when nothing could be cast.
     """
-    cast_map = _arrow_cast_map(model)
-    if not cast_map:
+    plan = _CAST_PLANS.get(model)
+    if plan is None or not plan.in_schema.equals(batch.schema):
+        plan = _build_cast_plan(batch.schema, model)
+        _CAST_PLANS[model] = plan
+    if not plan.entries:
         return batch
 
-    names = batch.schema.names
     columns: list[pa.Array] | None = None
-    for name, arrow_type in cast_map:
+    all_cast = True
+    for idx, arrow_type in plan.entries:
         try:
-            idx = names.index(name)
-        except ValueError:
-            continue
-        col = batch.column(idx)
-        if not (pa.types.is_string(col.type) or pa.types.is_large_string(col.type)):
-            continue
-        try:
-            cast_col = col.cast(arrow_type, safe=True)
+            cast_col = batch.column(idx).cast(arrow_type, safe=True)
         except (pa.ArrowInvalid, pa.ArrowNotImplementedError):
             # At least one cell doesn't parse — leave the column as
             # strings and let the per-row path report it.
+            all_cast = False
             continue
         if columns is None:
             columns = list(batch.columns)
@@ -221,7 +268,10 @@ def cast_csv_batch(
 
     if columns is None:
         return batch
-
+    if all_cast:
+        # Common case: reuse the schema built once for this file rather
+        # than constructing a fresh one per batch.
+        return pa.RecordBatch.from_arrays(columns, schema=plan.out_schema)
     schema = pa.schema(
         [
             batch.schema.field(i).with_type(columns[i].type)
