@@ -1,5 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+# Pinned deliberately. hatchling 1.29 emits "Metadata-Version: 2.5",
+# which current twine rejects at `twine check` and which PyPI may not
+# accept -- an unpinned build backend means the metadata version of a
+# release can change without any change to this project. Raise the
+# ceiling only after verifying `python -m build && twine check dist/*`.
+requires = ["hatchling>=1.24,<1.28"]
 build-backend = "hatchling.build"
 
 [project]
