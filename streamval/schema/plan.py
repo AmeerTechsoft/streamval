@@ -101,9 +101,20 @@ class CompiledValidationPlan:
         The fast path coerces every row, then calls
         :meth:`TypeAdapter.validate_python` once on the whole list. If
         that succeeds, all rows are valid and we wrap the parsed model
-        instances directly. If it raises, we fall back to per-row
-        validation so the offending rows can be isolated and reported
-        with their original ``ValidationError`` details.
+        instances directly.
+
+        If it raises, the failing rows are identified from the
+        ``ValidationError`` — a list adapter reports each error with the
+        element index as the first entry of ``loc`` — and only those rows
+        are re-validated one at a time to recover their exact error
+        detail. The remaining rows go back through the bulk validator in
+        a single call.
+
+        This matters because the naive alternative (re-validating the
+        whole batch per row) makes throughput depend on whether a batch
+        happens to contain *any* bad row, rather than on how many. At
+        ``batch_size=10000``, 20 bad rows in 200 000 is enough to put
+        every batch on the slow path and roughly halve throughput.
 
         Args:
             rows: The batch of raw row dicts to validate.
@@ -113,7 +124,7 @@ class CompiledValidationPlan:
 
         Returns:
             A list of :class:`ValidationResult` in input order, one per
-            input row.
+            input row. Identical to validating each row individually.
         """
         if not rows:
             return []
@@ -122,16 +133,71 @@ class CompiledValidationPlan:
 
         try:
             instances = self._list_adapter.validate_python(coerced)
-        except ValidationError:
-            return [
-                self.validate_row(start_index + i, rows[i])
-                for i in range(len(rows))
-            ]
+        except ValidationError as exc:
+            return self._split_failed_batch(rows, coerced, exc, start_index)
 
         return [
             ValidationResult.success(start_index + i, rows[i], instances[i])
             for i in range(len(rows))
         ]
+
+    def _validate_each(
+        self,
+        rows: list[dict[str, Any]],
+        start_index: int,
+    ) -> list[ValidationResult]:
+        """Per-row validation — the reference behaviour and last resort."""
+        return [
+            self.validate_row(start_index + i, rows[i]) for i in range(len(rows))
+        ]
+
+    def _split_failed_batch(
+        self,
+        rows: list[dict[str, Any]],
+        coerced: list[dict[str, Any]],
+        exc: ValidationError,
+        start_index: int,
+    ) -> list[ValidationResult]:
+        """Recover from a failed bulk validation without re-doing every row.
+
+        Falls back to :meth:`_validate_each` whenever the failing rows
+        can't be localised with confidence, so the result is always the
+        same as validating row by row.
+        """
+        n = len(rows)
+        bad: set[int] = set()
+        for err in exc.errors():
+            loc = err.get("loc")
+            if not loc or not isinstance(loc[0], int):
+                # Not an element-level error (or an unexpected shape) —
+                # don't guess which rows are implicated.
+                return self._validate_each(rows, start_index)
+            bad.add(loc[0])
+
+        if not bad or any(i < 0 or i >= n for i in bad):
+            return self._validate_each(rows, start_index)
+
+        good_positions = [i for i in range(n) if i not in bad]
+        results: list[ValidationResult | None] = [None] * n
+
+        if good_positions:
+            try:
+                good = self._list_adapter.validate_python(
+                    [coerced[i] for i in good_positions]
+                )
+            except ValidationError:
+                # The rows we believed were fine aren't; distrust the
+                # whole split and do it the slow, certain way.
+                return self._validate_each(rows, start_index)
+            for pos, i in enumerate(good_positions):
+                results[i] = ValidationResult.success(
+                    start_index + i, rows[i], good[pos]
+                )
+
+        for i in bad:
+            results[i] = self.validate_row(start_index + i, rows[i])
+
+        return [r for r in results if r is not None]
 
     def validate_record_batch(
         self,
