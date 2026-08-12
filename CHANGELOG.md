@@ -5,6 +5,34 @@ All notable changes to streamval will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-08-12
+
+Documentation and packaging only — no library code changed, so there is
+no reason to upgrade from 0.3.0 for behaviour. It exists because PyPI
+metadata is immutable and 0.3.0 shipped with broken documentation links.
+
+### Fixed
+- **The documentation site now exists.** `streamval.readthedocs.io`
+  returned 404 at every path including the root: `.readthedocs.yaml` was
+  committed but the project was never imported, so no build ever ran.
+  The site is now built and published to GitHub Pages at
+  <https://ameertechsoft.github.io/streamval/> by a new `docs` workflow
+  on every push to `main`.
+- **Documentation links on the PyPI page.** `README.md` is the PyPI long
+  description, and PyPI does not resolve relative links — so every guide
+  link (`](docs/index.md)`, `](docs/user-guide/index.md)`, …) and the
+  licence link (`](LICENSE)`) 404'd on the package page. All eight are
+  now absolute. This was broken for 0.2.2 and 0.3.0 as well; those
+  releases cannot be corrected in place.
+- `Documentation` in project metadata now points at the live site
+  instead of the dead Read the Docs URL.
+
+### Added
+- A `Docs build` job in CI running `mkdocs build --strict`, so broken
+  internal links, missing nav targets and mkdocstrings failures fail the
+  build. Nothing in CI built the docs before, which is why the site
+  being absent went unnoticed.
+
 ## [0.3.0] - 2026-08-12
 
 A performance release. Same API, same validation results, 4-7× the
