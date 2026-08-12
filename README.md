@@ -167,17 +167,17 @@ a secondary goal. Throughput, 100 000 rows, 4-column schema:
 
 ## Documentation
 
-**Online docs:** [streamval.readthedocs.io](https://streamval.readthedocs.io/en/latest/)
+**Online docs:** [ameertechsoft.github.io/streamval](https://ameertechsoft.github.io/streamval/)
 
-Full guides (also in [`docs/`](docs/index.md)):
+Full guides (also in [`docs/`](https://github.com/AmeerTechsoft/streamval/blob/main/docs/index.md)):
 
 | Guide | Topics |
 |---|---|
-| [Documentation index](docs/index.md) | End-to-end workflow, install, doc map |
-| [Getting started](docs/getting-started/index.md) | Quickstart and schema design |
-| [User guide](docs/user-guide/index.md) | Validation, results, error strategies |
-| [Reference](docs/reference/index.md) | Adapters, API, Python docstrings |
-| [Development](docs/development/index.md) | Benchmarks and changelog |
+| [Documentation index](https://ameertechsoft.github.io/streamval/) | End-to-end workflow, install, doc map |
+| [Getting started](https://ameertechsoft.github.io/streamval/getting-started/) | Quickstart and schema design |
+| [User guide](https://ameertechsoft.github.io/streamval/user-guide/) | Validation, results, error strategies |
+| [Reference](https://ameertechsoft.github.io/streamval/reference/) | Adapters, API, Python docstrings |
+| [Development](https://ameertechsoft.github.io/streamval/development/) | Benchmarks and changelog |
 
 ## Contributing
 
@@ -190,4 +190,4 @@ pytest
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](https://github.com/AmeerTechsoft/streamval/blob/main/LICENSE).
